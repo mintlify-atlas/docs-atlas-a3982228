@@ -1,0 +1,283 @@
+---
+title: "Feature estimation"
+description: "Compute local and global descriptors — normals, FPFH, VFH, SHOT, PFH, and ESF — for recognition and registration tasks."
+keywords: ["pcl", "features", "normals", "FPFH", "VFH", "SHOT", "PFH", "ESF", "point feature histogram"]
+---
+
+## Overview
+
+Feature descriptors encode the local or global geometry around a point (or an entire cloud) as a compact vector. They are the building blocks for:
+
+- **Object recognition** — match a query object against a database of descriptors
+- **Initial alignment** — bootstrap ICP by finding coarse correspondences between FPFH/SHOT descriptors
+- **Pose estimation** — VFH encodes viewpoint information alongside shape
+
+<CardGroup cols={2}>
+  <Card title="Local descriptors" icon="map-pin">
+    Computed per-point. Describe the neighbourhood geometry. Used for correspondence matching. Examples: FPFH, SHOT, PFH.
+  </Card>
+  <Card title="Global descriptors" icon="globe">
+    One descriptor per cloud. Describe overall object shape from a given viewpoint. Examples: VFH, ESF.
+  </Card>
+</CardGroup>
+
+All feature estimators inherit from `pcl::Feature<PointInT, PointOutT>`. The general usage pattern is:
+
+```cpp
+estimator.setInputCloud(cloud);
+estimator.setSearchMethod(tree);
+estimator.setRadiusSearch(radius); // or setKSearch(k)
+estimator.compute(*descriptors);
+```
+
+<Warning>
+  The search radius used for feature estimation must be **larger** than the radius used for normal estimation, otherwise the feature descriptor will not capture enough surface context.
+</Warning>
+
+---
+
+## Normal estimation
+
+Surface normals are required by almost every other feature estimator. `pcl::NormalEstimation<PointInT, PointOutT>` fits a plane to each point's k-neighbourhood using PCA and returns the normal vector plus a surface curvature estimate.
+
+**Header:** `<pcl/features/normal_3d.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setInputCloud` | `void setInputCloud(const PointCloudPtr &)` | Input XYZ cloud. |
+| `setSearchMethod` | `void setSearchMethod(const KdTreePtr &)` | Spatial index for neighbour search. |
+| `setKSearch` | `void setKSearch(int k)` | Use k nearest neighbours. |
+| `setRadiusSearch` | `void setRadiusSearch(double r)` | Use all neighbours within radius r (metres). |
+| `setViewPoint` | `void setViewPoint(float vp_x, float vp_y, float vp_z)` | Orient normals consistently toward this viewpoint. Default: (0,0,0). |
+| `compute` | `void compute(PointCloudOut &output)` | Run estimation; output has the same number of points as input. |
+
+### Code example
+
+```cpp normal_estimation.cpp
+#include <pcl/point_types.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/search/kdtree.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("scene.pcd", *cloud);
+
+  // Create KdTree for neighbour search
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+
+  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+  ne.setInputCloud(cloud);
+  ne.setSearchMethod(tree);
+  ne.setRadiusSearch(0.03); // 3 cm neighbourhood
+
+  pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+  ne.compute(*cloud_normals);
+
+  // cloud_normals->size() == cloud->size()
+  return 0;
+}
+```
+
+<Tip>
+  Choose the neighbourhood radius based on the desired level of detail. A small radius captures fine edges; a large radius averages over larger surface patches and is more robust to noise.
+</Tip>
+
+---
+
+## NormalEstimationOMP
+
+`pcl::NormalEstimationOMP<PointInT, PointOutT>` is a drop-in, OpenMP-parallel replacement for `NormalEstimation`. Its API is identical; only the class name changes.
+
+**Header:** `<pcl/features/normal_3d_omp.h>`
+
+```cpp normal_omp.cpp
+#include <pcl/features/normal_3d_omp.h>
+
+pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> ne_omp;
+ne_omp.setNumberOfThreads(8); // optional; 0 = auto-detect
+ne_omp.setInputCloud(cloud);
+ne_omp.setSearchMethod(tree);
+ne_omp.setRadiusSearch(0.03);
+ne_omp.compute(*cloud_normals);
+```
+
+On an 8-core machine expect 6–8× speedup over the single-threaded version.
+
+---
+
+## FPFH
+
+`pcl::FPFHEstimation<PointInT, PointNT, PointOutT>` computes Fast Point Feature Histograms. FPFH reduces the O(nk²) complexity of PFH to O(nk) by first computing a Simplified PFH (SPFH) for each point, then re-weighting the SPFHs of each point's neighbours to form the final descriptor.
+
+The default output type is `pcl::FPFHSignature33` — a 33-dimensional float histogram (three angular features × 11 bins each, concatenated).
+
+**Header:** `<pcl/features/fpfh.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setInputCloud` | `void setInputCloud(const PointCloudPtr &)` | XYZ input cloud. |
+| `setInputNormals` | `void setInputNormals(const PointCloudNPtr &)` | Pre-computed normals (same size as input). |
+| `setSearchMethod` | `void setSearchMethod(const KdTreePtr &)` | Spatial index. |
+| `setRadiusSearch` | `void setRadiusSearch(double r)` | Must be larger than the normal estimation radius. |
+| `compute` | `void compute(PointCloudOut &)` | Output: one `FPFHSignature33` per input point. |
+
+### Code example
+
+```cpp fpfh_estimation.cpp
+#include <pcl/point_types.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/features/fpfh.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/search/kdtree.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("object.pcd", *cloud);
+
+  // Step 1 — estimate normals at 3 cm radius
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+  ne.setInputCloud(cloud);
+  ne.setSearchMethod(tree);
+  ne.setRadiusSearch(0.03);
+  ne.compute(*normals);
+
+  // Step 2 — compute FPFH at 5 cm radius (must be > normal radius)
+  pcl::FPFHEstimation<pcl::PointXYZ, pcl::Normal, pcl::FPFHSignature33> fpfh;
+  fpfh.setInputCloud(cloud);
+  fpfh.setInputNormals(normals);
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree2(new pcl::search::KdTree<pcl::PointXYZ>);
+  fpfh.setSearchMethod(tree2);
+  fpfh.setRadiusSearch(0.05);
+
+  pcl::PointCloud<pcl::FPFHSignature33>::Ptr fpfhs(new pcl::PointCloud<pcl::FPFHSignature33>);
+  fpfh.compute(*fpfhs);
+
+  // fpfhs->size() == cloud->size()
+  return 0;
+}
+```
+
+<Note>
+  `FPFHEstimation` is not thread-safe. For parallel computation use `pcl::FPFHEstimationOMP` (header: `<pcl/features/fpfh_omp.h>`) with an identical API.
+</Note>
+
+---
+
+## VFH
+
+`pcl::VFHEstimation<PointInT, PointNT, PointOutT>` computes the Viewpoint Feature Histogram — a **global** descriptor that captures both FPFH-style shape statistics and the viewpoint direction relative to the object centroid. It produces a single `pcl::VFHSignature308` per cloud (308 floats: 45 bins × 3 FPFH components + 45 distance bins + 128 viewpoint bins).
+
+**Header:** `<pcl/features/vfh.h>`
+
+```cpp vfh.cpp
+#include <pcl/features/vfh.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/search/kdtree.h>
+
+// Assume cloud and normals already computed (see Normal estimation above)
+pcl::VFHEstimation<pcl::PointXYZ, pcl::Normal, pcl::VFHSignature308> vfh;
+vfh.setInputCloud(cloud);
+vfh.setInputNormals(normals);
+pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+vfh.setSearchMethod(tree);
+
+pcl::PointCloud<pcl::VFHSignature308>::Ptr vfhs(new pcl::PointCloud<pcl::VFHSignature308>);
+vfh.compute(*vfhs);
+// vfhs->size() == 1
+```
+
+<Tip>
+  Because VFH is viewpoint-dependent, training and query clouds should share a similar acquisition viewpoint for reliable matching. For viewpoint-invariant recognition, prefer SHOT or ESF.
+</Tip>
+
+---
+
+## SHOT
+
+`pcl::SHOTEstimation<PointInT, PointNT, PointOutT, PointRFT>` computes the Signature of Histograms of OrienTations. SHOT divides a spherical neighbourhood into 32 spatial volumes and accumulates normal orientation histograms in each, producing `pcl::SHOT352` (352 floats).
+
+**Header:** `<pcl/features/shot.h>`
+
+```cpp shot.cpp
+#include <pcl/features/shot.h>
+
+// Assume cloud and normals already computed
+pcl::SHOTEstimation<pcl::PointXYZ, pcl::Normal, pcl::SHOT352> shot;
+shot.setInputCloud(cloud);
+shot.setInputNormals(normals);
+shot.setRadiusSearch(0.05);
+
+pcl::PointCloud<pcl::SHOT352>::Ptr shots(new pcl::PointCloud<pcl::SHOT352>);
+shot.compute(*shots);
+```
+
+SHOT is more discriminative than FPFH but slower. Use `pcl::SHOTEstimationOMP` for parallelism.
+
+---
+
+## PFH
+
+`pcl::PFHEstimation<PointInT, PointNT, PointOutT>` is the original Point Feature Histogram descriptor. It models all pairwise interactions between neighbours, giving O(nk²) complexity. The output type is `pcl::PFHSignature125` (125 floats).
+
+**Header:** `<pcl/features/pfh.h>`
+
+```cpp pfh.cpp
+#include <pcl/features/pfh.h>
+
+pcl::PFHEstimation<pcl::PointXYZ, pcl::Normal, pcl::PFHSignature125> pfh;
+pfh.setInputCloud(cloud);
+pfh.setInputNormals(normals);
+pfh.setRadiusSearch(0.05);
+
+pcl::PointCloud<pcl::PFHSignature125>::Ptr pfhs(new pcl::PointCloud<pcl::PFHSignature125>);
+pfh.compute(*pfhs);
+```
+
+<Note>
+  Prefer FPFH over PFH for most applications. PFH's O(nk²) complexity makes it impractical on dense clouds or real-time systems.
+</Note>
+
+---
+
+## ESF
+
+`pcl::ESFEstimation<PointInT, PointOutT>` computes the Ensemble of Shape Functions — a **global** descriptor that does not require surface normals. It samples random point triplets and accumulates distance, angle, and area statistics into a 640-dimensional histogram (`pcl::ESFSignature640`).
+
+**Header:** `<pcl/features/esf.h>`
+
+```cpp esf.cpp
+#include <pcl/features/esf.h>
+
+pcl::ESFEstimation<pcl::PointXYZ, pcl::ESFSignature640> esf;
+esf.setInputCloud(cloud);
+
+pcl::PointCloud<pcl::ESFSignature640>::Ptr esfs(new pcl::PointCloud<pcl::ESFSignature640>);
+esf.compute(*esfs);
+// esfs->size() == 1  (one global descriptor per cloud)
+```
+
+---
+
+## Choosing a descriptor
+
+| Descriptor | Scope | Dimensionality | Normals required | Relative speed | Best use |
+|------------|-------|---------------|-----------------|----------------|----------|
+| FPFH | Local | 33 | Yes | Fast | Initial alignment (SAC-IA), real-time matching |
+| FPFH-OMP | Local | 33 | Yes | Very fast | Same as FPFH on multi-core hardware |
+| PFH | Local | 125 | Yes | Slow | High-accuracy offline recognition |
+| SHOT | Local | 352 | Yes | Medium | Robust matching, more discriminative than FPFH |
+| VFH | Global | 308 | Yes | Fast | Pose estimation and object classification |
+| ESF | Global | 640 | No | Medium | Normal-free global shape recognition |
+
+<Tip>
+  For a full registration pipeline — normals → FPFH → SAC-IA initial alignment → ICP refinement — see the [Registration](/modules/registration) module.
+</Tip>

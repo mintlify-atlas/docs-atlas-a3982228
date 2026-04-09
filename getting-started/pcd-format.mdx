@@ -1,0 +1,226 @@
+---
+title: "PCD file format"
+description: "A complete reference for the Point Cloud Data (PCD) file format used throughout PCL, including header fields, data modes, and read/write API."
+---
+
+PCD (**P**oint **C**loud **D**ata) is the native file format for PCL. It was designed to address limitations of existing 3D file formats — such as PLY, STL, and OBJ — by supporting organized point clouds, multiple data storage modes, and arbitrary per-point field layouts including n-dimensional feature descriptors.
+
+<Note>
+  The current PCD specification is version **0.7** (PCD_V7). All examples on this page use version 0.7.
+</Note>
+
+## Header fields
+
+Every PCD file begins with an ASCII header. The header fields must appear in exactly the following order:
+
+| Field        | Description |
+|--------------|-------------|
+| `VERSION`    | PCD file version. Use `.7`. |
+| `FIELDS`     | Space-separated names of each point dimension (e.g. `x y z` or `x y z rgb`). |
+| `SIZE`       | Size in bytes of each field: `1` (char/uchar), `2` (short/ushort), `4` (int/uint/float), `8` (double). |
+| `TYPE`       | Type of each field: `I` (signed int), `U` (unsigned int), `F` (float). |
+| `COUNT`      | Number of elements per field. Usually `1`; feature descriptors like VFH use `308`. |
+| `WIDTH`      | For an unorganized cloud: total number of points. For an organized cloud: number of columns. |
+| `HEIGHT`     | `1` for an unorganized cloud. Number of rows for an organized cloud. |
+| `VIEWPOINT`  | Sensor acquisition viewpoint as `tx ty tz qw qx qy qz` (translation + quaternion). Default: `0 0 0 1 0 0 0`. |
+| `POINTS`     | Total number of points in the cloud. |
+| `DATA`       | Storage mode: `ascii`, `binary`, or `binary_compressed`. |
+
+<Warning>
+  The header fields must appear in the exact order listed above. Any deviation will cause `pcl::PCDReader` to fail parsing the file.
+</Warning>
+
+## Organized vs. unorganized point clouds
+
+The `WIDTH` and `HEIGHT` fields together indicate whether a cloud is organized or unorganized.
+
+- An **organized cloud** (`HEIGHT > 1`) preserves the 2D grid structure of a depth camera or stereo pair. Knowing which points are spatially adjacent enables more efficient nearest-neighbor operations.
+- An **unorganized cloud** (`HEIGHT == 1`) is a flat list of points with no implied adjacency. This is the most common form when working with LiDAR data or merged scans.
+
+```
+# Organized cloud: 640 columns × 480 rows = 307,200 points
+WIDTH 640
+HEIGHT 480
+
+# Unorganized cloud: 307,200 points in a flat list
+WIDTH 307200
+HEIGHT 1
+```
+
+## ASCII PCD example
+
+A complete PCD file with five `PointXYZ` points:
+
+```
+# .PCD v.7 - Point Cloud Data file format
+VERSION .7
+FIELDS x y z
+SIZE 4 4 4
+TYPE F F F
+COUNT 1 1 1
+WIDTH 5
+HEIGHT 1
+VIEWPOINT 0 0 0 1 0 0 0
+POINTS 5
+DATA ascii
+0.35222 -0.15188 -0.10640
+-0.39741 -0.47311 0.29260
+-0.73190 0.66710 0.44130
+-0.73477 0.85458 -0.03617
+-0.46070 -0.27747 -0.91676
+```
+
+Each line after `DATA ascii` is one point, with fields separated by spaces. Invalid (NaN) values are written as `nan`.
+
+## Binary PCD example header
+
+For large clouds, binary mode offers significantly faster I/O. The header is identical ASCII; everything after the `DATA binary` line is a raw memory dump of the points array.
+
+```
+# .PCD v.7 - Point Cloud Data file format
+VERSION .7
+FIELDS x y z
+SIZE 4 4 4
+TYPE F F F
+COUNT 1 1 1
+WIDTH 307200
+HEIGHT 1
+VIEWPOINT 0 0 0 1 0 0 0
+POINTS 307200
+DATA binary
+<307200 × 12 bytes of raw float data follow immediately>
+```
+
+A third mode, `binary_compressed`, stores the body as LZF-compressed data and typically achieves 30–60% size reduction while remaining fast to decompress.
+
+## Reading PCD files
+
+### Convenience function
+
+The simplest way to load a PCD file into a typed point cloud:
+
+```cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+if (pcl::io::loadPCDFile<pcl::PointXYZ>("input.pcd", *cloud) == -1) {
+  PCL_ERROR("Couldn't read file input.pcd\n");
+  return -1;
+}
+
+std::cout << "Loaded " << cloud->size() << " points\n";
+```
+
+`pcl::io::loadPCDFile` returns `0` on success and `-1` on failure.
+
+### PCDReader class
+
+For more control — for example, reading the file in chunks or inspecting the header — use `pcl::PCDReader` directly:
+
+```cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+pcl::PCDReader reader;
+reader.read("input.pcd", *cloud);
+```
+
+You can also read into the untyped `pcl::PCLPointCloud2` blob, which preserves all fields regardless of point type, and convert later:
+
+```cpp
+pcl::PCLPointCloud2 cloud_blob;
+pcl::io::loadPCDFile("input.pcd", cloud_blob);
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+pcl::fromPCLPointCloud2(cloud_blob, *cloud);
+```
+
+## Writing PCD files
+
+### ASCII
+
+Human-readable output, useful for debugging and interoperability with other tools (gnuplot, awk, etc.):
+
+```cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+pcl::PointCloud<pcl::PointXYZ> cloud;
+// ... fill cloud ...
+pcl::io::savePCDFileASCII("output.pcd", cloud);
+```
+
+### Binary
+
+Raw memory dump of the points array. Faster to read and write, smaller on disk than ASCII for large clouds:
+
+```cpp
+pcl::io::savePCDFileBinary("output.pcd", cloud);
+```
+
+### Binary compressed
+
+Best combination of file size and I/O speed for production use:
+
+```cpp
+pcl::io::savePCDFileBinaryCompressed("output.pcd", cloud);
+```
+
+### PCDWriter class
+
+Equivalent to the convenience functions above but exposes more options, such as setting sensor origin and orientation explicitly:
+
+```cpp
+pcl::PCDWriter writer;
+writer.write("output.pcd", cloud, /* binary = */ false);
+```
+
+## Complete read + write example
+
+```cpp
+#include <iostream>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+int main()
+{
+  // Read
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  if (pcl::io::loadPCDFile<pcl::PointXYZ>("input.pcd", *cloud) == -1) {
+    PCL_ERROR("Couldn't read file input.pcd\n");
+    return -1;
+  }
+  std::cout << "Loaded " << cloud->size() << " points\n";
+
+  // Print first five points
+  for (std::size_t i = 0; i < std::min<std::size_t>(5, cloud->size()); ++i) {
+    const auto& p = (*cloud)[i];
+    std::cout << "  " << p.x << " " << p.y << " " << p.z << "\n";
+  }
+
+  // Write as binary compressed
+  pcl::io::savePCDFileBinaryCompressed("output.pcd", *cloud);
+  std::cout << "Saved " << cloud->size() << " points to output.pcd\n";
+
+  return 0;
+}
+```
+
+## Supported field types
+
+The `FIELDS`, `SIZE`, `TYPE`, and `COUNT` headers together fully describe each point's memory layout. Common built-in point types and their corresponding fields:
+
+| Point type | FIELDS |
+|------------|--------|
+| `pcl::PointXYZ` | `x y z` |
+| `pcl::PointXYZI` | `x y z intensity` |
+| `pcl::PointXYZRGB` | `x y z rgb` |
+| `pcl::PointNormal` | `x y z normal_x normal_y normal_z curvature` |
+| `pcl::FPFHSignature33` | `fpfh` (COUNT 33) |
+
+<Tip>
+  Use `pcl_viewer input.pcd` from the command line to quickly inspect and render any PCD file after installing PCL.
+</Tip>

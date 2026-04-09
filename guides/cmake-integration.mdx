@@ -1,0 +1,189 @@
+---
+title: "CMake integration"
+description: "How to use PCL in your CMake project"
+---
+
+PCL ships a `PCLConfig.cmake` file that lets CMake's `find_package` locate headers, libraries, and compiler flags for you. Add three lines to your `CMakeLists.txt` and you are ready to build against any PCL component.
+
+## Minimal example
+
+The following `CMakeLists.txt` builds a single executable that links against all found PCL libraries:
+
+```cmake
+cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
+project(my_pcl_project)
+
+find_package(PCL 1.3 REQUIRED)
+
+include_directories(${PCL_INCLUDE_DIRS})
+link_directories(${PCL_LIBRARY_DIRS})
+add_definitions(${PCL_DEFINITIONS})
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app ${PCL_LIBRARIES})
+```
+
+## PCL CMake variables
+
+When `find_package(PCL ...)` succeeds, CMake populates these variables:
+
+| Variable | Content |
+|---|---|
+| `PCL_FOUND` | Set to `1` if PCL was found, otherwise unset |
+| `PCL_VERSION` | Version string of the found PCL installation |
+| `PCL_INCLUDE_DIRS` | Paths to PCL headers and dependency headers |
+| `PCL_LIBRARIES` | File names of the built and installed PCL libraries |
+| `PCL_LIBRARY_DIRS` | Paths to PCL libraries and third-party dependencies |
+| `PCL_DEFINITIONS` | Required preprocessor definitions and compiler flags |
+| `PCL_COMPONENTS` | List of all available components in this installation |
+
+## Selecting specific components
+
+You can request only the PCL modules your project needs. CMake will fail gracefully if a required component is missing:
+
+```cmake
+find_package(PCL REQUIRED COMPONENTS common io filters features)
+```
+
+<AccordionGroup>
+  <Accordion title="Available components">
+    | Component | Description |
+    |---|---|
+    | `common` | Core data structures, point types, utilities |
+    | `io` | PCD, PLY, OBJ file readers and writers; sensor drivers |
+    | `kdtree` | KD-tree spatial search (FLANN-backed) |
+    | `octree` | Octree spatial data structure and spatial change detection |
+    | `search` | Unified search interface over KD-tree and octree backends |
+    | `filters` | VoxelGrid, PassThrough, StatisticalOutlierRemoval, etc. |
+    | `features` | Normal, FPFH, VFH, SHOT, and other feature estimators |
+    | `sample_consensus` | RANSAC, MSAC, RRANSAC, and other SAC methods |
+    | `segmentation` | Euclidean clustering, region growing, min-cut, SAC segmentation |
+    | `registration` | ICP, NDT, and other point cloud alignment algorithms |
+    | `surface` | Convex hull, Poisson reconstruction, MLS smoothing |
+    | `visualization` | PCLVisualizer, range image visualizer (requires VTK) |
+    | `geometry` | Polygon mesh utilities |
+    | `tracking` | Particle filter tracker and tracking framework |
+    | `people` | Ground-plane-based people detection |
+    | `outofcore` | Out-of-core octree for very large point cloud datasets |
+    | `stereo` | Stereo image disparity map processing |
+    | `ml` | Machine learning utilities (SVM, etc.) |
+    | `2d` | 2D image keypoint extraction and feature estimation |
+  </Accordion>
+</AccordionGroup>
+
+## Modern CMake: target-based approach
+
+Newer PCL versions export CMake imported targets. Using targets instead of raw variables automatically propagates include paths and compile flags to dependents:
+
+<Tabs>
+  <Tab title="Modern (recommended)">
+    ```cmake
+    cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
+    project(my_pcl_project)
+
+    find_package(PCL REQUIRED COMPONENTS common io filters)
+
+    add_executable(my_app main.cpp)
+
+    # Imported targets carry includes, definitions, and link dirs automatically
+    target_link_libraries(my_app
+      pcl_common
+      pcl_io
+      pcl_filters
+    )
+    ```
+  </Tab>
+  <Tab title="Variable-based (legacy)">
+    ```cmake
+    cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
+    project(my_pcl_project)
+
+    find_package(PCL REQUIRED COMPONENTS common io filters)
+
+    include_directories(${PCL_INCLUDE_DIRS})
+    link_directories(${PCL_LIBRARY_DIRS})
+    add_definitions(${PCL_DEFINITIONS})
+
+    add_executable(my_app main.cpp)
+    target_link_libraries(my_app ${PCL_LIBRARIES})
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Imported target names follow the pattern `pcl_<component>`, for example `pcl_common`, `pcl_io`, and `pcl_filters`. These targets are available after a successful `find_package(PCL ...)` call.
+</Note>
+
+## Integration workflow
+
+<Steps>
+  <Step title="Install PCL">
+    Install PCL via a system package manager or vcpkg, or build and install it from source. Confirm the installation by locating `PCLConfig.cmake`:
+
+    ```bash
+    # Ubuntu / Debian
+    sudo apt install libpcl-dev
+
+    # macOS with Homebrew
+    brew install pcl
+
+    # vcpkg
+    vcpkg install pcl
+    ```
+  </Step>
+  <Step title="Create your CMakeLists.txt">
+    Add `find_package(PCL ...)` with the components you need and link your targets against the PCL libraries.
+  </Step>
+  <Step title="Configure with CMake">
+    Create a build directory and run CMake:
+
+    ```bash
+    mkdir build && cd build
+    cmake -DCMAKE_BUILD_TYPE=Release ..
+    ```
+
+    CMake prints a line for each found PCL component, for example:
+
+    ```
+    -- Found PCL_IO: /usr/local/lib/libpcl_io.so
+    -- Found PCL: /usr/local/lib (Required is at least version "1.3")
+    ```
+  </Step>
+  <Step title="Build">
+    ```bash
+    make -j$(nproc)
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+Always set `-DCMAKE_BUILD_TYPE=Release` for production builds. The Release build type enables `-O3` optimisation (or `/O2` on MSVC), which is significantly faster than the default unoptimised Debug build. Use `RelWithDebInfo` when you need both performance and debugging symbols.
+</Tip>
+
+## Non-standard install locations
+
+If PCL is installed in a location CMake does not search by default, tell CMake where to find `PCLConfig.cmake` before calling `find_package`:
+
+```cmake
+# Set this before find_package if PCL is in a non-standard location
+set(PCL_DIR "/path/to/lib/cmake/pcl")
+find_package(PCL REQUIRED)
+```
+
+You can also pass it on the command line:
+
+```bash
+cmake -DPCL_DIR=/path/to/lib/cmake/pcl ..
+```
+
+## vcpkg integration
+
+When using vcpkg, pass the vcpkg toolchain file to CMake so that `find_package` resolves to vcpkg-managed libraries:
+
+```bash
+cmake -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake \
+      -DCMAKE_BUILD_TYPE=Release \
+      ..
+```
+
+No other changes to `CMakeLists.txt` are required — `find_package(PCL ...)` works the same way.

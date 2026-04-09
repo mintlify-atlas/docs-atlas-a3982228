@@ -1,0 +1,442 @@
+---
+title: "Registration"
+description: "Align point clouds with ICP, GICP, NDT, and feature-based pipelines using PCL's registration classes."
+keywords: ["pcl", "registration", "ICP", "GICP", "NDT", "SAC-IA", "point cloud alignment", "FPFH"]
+---
+
+## Overview
+
+Registration finds the rigid transformation (rotation + translation) that best aligns a **source** cloud onto a **target** cloud. The typical pipeline has two stages:
+
+```
+Source cloud → Initial alignment (SAC-IA / NDT) → Fine alignment (ICP / GICP) → Aligned cloud
+```
+
+1. **Coarse/initial alignment** — use feature descriptors or a grid-based method to get within the convergence basin of a local optimiser.
+2. **Fine alignment** — iteratively refine the transformation using point-to-point or point-to-plane correspondences.
+
+All registration classes inherit from `pcl::Registration<PointSource, PointTarget, Scalar>`:
+
+```cpp
+reg.setInputSource(cloud_source);
+reg.setInputTarget(cloud_target);
+reg.align(cloud_aligned);                          // fills cloud_aligned
+Eigen::Matrix4f T = reg.getFinalTransformation();  // 4×4 rigid transform
+bool ok = reg.hasConverged();
+float score = reg.getFitnessScore();               // mean squared error of correspondences
+```
+
+---
+
+## ICP
+
+`pcl::IterativeClosestPoint<PointSource, PointTarget, Scalar>` is the canonical fine-alignment algorithm. Each iteration:
+
+1. Finds the nearest-neighbour correspondence for every source point in the target.
+2. Rejects correspondences beyond `max_correspondence_distance`.
+3. Estimates the rigid transformation that minimises the mean squared correspondence distance (SVD by default).
+4. Applies the transformation and checks convergence.
+
+**Header:** `<pcl/registration/icp.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setInputSource` | `void setInputSource(const PointCloudSourceConstPtr &)` | Cloud to be aligned (moved). |
+| `setInputTarget` | `void setInputTarget(const PointCloudTargetConstPtr &)` | Reference cloud (fixed). |
+| `setMaxCorrespondenceDistance` | `void setMaxCorrespondenceDistance(double d)` | Correspondences further than `d` metres are ignored. |
+| `setMaximumIterations` | `void setMaximumIterations(int n)` | Iteration limit (criterion 1). |
+| `setTransformationEpsilon` | `void setTransformationEpsilon(double eps)` | Stop when transform change < eps (criterion 2). |
+| `setEuclideanFitnessEpsilon` | `void setEuclideanFitnessEpsilon(double eps)` | Stop when mean squared error < eps (criterion 3). |
+| `align` | `void align(PointCloudSource &output)` | Run ICP; writes aligned source to `output`. |
+| `getFinalTransformation` | `Matrix4 getFinalTransformation() const` | The accumulated 4×4 transformation. |
+| `hasConverged` | `bool hasConverged() const` | `true` if a convergence criterion was met. |
+| `getFitnessScore` | `double getFitnessScore(double max_range = MAX)` | Mean squared correspondence distance. |
+
+### Code example
+
+```cpp icp_example.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/registration/icp.h>
+#include <iostream>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_source(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_target(new pcl::PointCloud<pcl::PointXYZ>);
+
+  pcl::PCDReader reader;
+  reader.read("cloud_source.pcd", *cloud_source);
+  reader.read("cloud_target.pcd", *cloud_target);
+
+  pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
+  icp.setInputSource(cloud_source);
+  icp.setInputTarget(cloud_target);
+
+  // Correspondences beyond 5 cm are rejected
+  icp.setMaxCorrespondenceDistance(0.05);
+  // Iteration limit
+  icp.setMaximumIterations(50);
+  // Stop when transform change < 1e-8
+  icp.setTransformationEpsilon(1e-8);
+  // Stop when fitness score change < 1
+  icp.setEuclideanFitnessEpsilon(1.0);
+
+  pcl::PointCloud<pcl::PointXYZ> cloud_aligned;
+  icp.align(cloud_aligned);
+
+  std::cout << "Converged: " << icp.hasConverged()
+            << "  Score: " << icp.getFitnessScore() << "\n";
+  std::cout << "Transform:\n" << icp.getFinalTransformation() << "\n";
+
+  pcl::PCDWriter().write("aligned.pcd", cloud_aligned);
+  return 0;
+}
+```
+
+<Warning>
+  ICP converges to a local minimum. If the source and target are not already roughly aligned (within ~10–20 % of the object diameter), use SAC-IA or NDT for initial alignment first.
+</Warning>
+
+---
+
+## GICP
+
+`pcl::GeneralizedIterativeClosestPoint<PointSource, PointTarget>` extends ICP by modelling each point's neighbourhood as a Gaussian distribution and minimising the distribution-to-distribution distance. This makes it more robust to noise and non-uniform density.
+
+**Header:** `<pcl/registration/gicp.h>`
+
+```cpp gicp_example.cpp
+#include <pcl/registration/gicp.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr source(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr target(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("source.pcd", *source);
+  pcl::PCDReader().read("target.pcd", *target);
+
+  pcl::GeneralizedIterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> gicp;
+  gicp.setInputSource(source);
+  gicp.setInputTarget(target);
+  gicp.setMaxCorrespondenceDistance(0.05);
+  gicp.setMaximumIterations(50);
+  gicp.setTransformationEpsilon(1e-8);
+
+  pcl::PointCloud<pcl::PointXYZ> aligned;
+  gicp.align(aligned);
+
+  std::cout << "GICP converged: " << gicp.hasConverged()
+            << "  Score: " << gicp.getFitnessScore() << "\n";
+  return 0;
+}
+```
+
+GICP uses the same API as ICP and is a drop-in replacement. It is typically slower per iteration but converges in fewer iterations on noisy data.
+
+---
+
+## NDT
+
+`pcl::NormalDistributionsTransform<PointSource, PointTarget>` represents the target cloud as a set of normal distributions over a voxel grid, then optimises the transformation to maximise the likelihood of the source under those distributions. NDT is well-suited to large outdoor LiDAR scans.
+
+**Header:** `<pcl/registration/ndt.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setResolution` | `void setResolution(float resolution)` | Voxel grid cell size (metres). Larger = coarser but faster. |
+| `setStepSize` | `void setStepSize(double step_size)` | Maximum step size for the More-Thuente line search. |
+| `setTransformationEpsilon` | `void setTransformationEpsilon(double eps)` | Convergence threshold. |
+| `setMaximumIterations` | `void setMaximumIterations(int n)` | Iteration limit. |
+
+### Code example
+
+```cpp ndt_example.cpp
+#include <pcl/registration/ndt.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr source(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr target(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("scan_source.pcd", *source);
+  pcl::PCDReader().read("scan_target.pcd", *target);
+
+  // Downsample to speed up alignment
+  pcl::PointCloud<pcl::PointXYZ>::Ptr source_ds(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::VoxelGrid<pcl::PointXYZ> vg;
+  vg.setLeafSize(0.2f, 0.2f, 0.2f);
+  vg.setInputCloud(source);
+  vg.filter(*source_ds);
+
+  pcl::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> ndt;
+  ndt.setTransformationEpsilon(0.01);
+  ndt.setStepSize(0.1);
+  ndt.setResolution(1.0f);
+  ndt.setMaximumIterations(35);
+  ndt.setInputSource(source_ds);
+  ndt.setInputTarget(target);
+
+  // Provide an initial guess if available (identity here)
+  Eigen::Matrix4f initial_guess = Eigen::Matrix4f::Identity();
+
+  pcl::PointCloud<pcl::PointXYZ> aligned;
+  ndt.align(aligned, initial_guess);
+
+  std::cout << "NDT converged: " << ndt.hasConverged()
+            << "  Score: "       << ndt.getFitnessScore() << "\n";
+  return 0;
+}
+```
+
+<Tip>
+  For large outdoor maps, set `setResolution()` to the approximate voxel size you used for downsampling (0.5–2.0 m). Provide a rough initial guess from odometry or GPS to improve convergence.
+</Tip>
+
+---
+
+## Initial alignment with features
+
+`pcl::SampleConsensusInitialAlignment<PointSource, PointTarget, FeatureT>` (SAC-IA) finds a coarse alignment by randomly sampling source keypoints, finding matching target keypoints via descriptor distance, and scoring the resulting transformation with RANSAC. It is commonly paired with FPFH descriptors.
+
+**Header:** `<pcl/registration/ia_ransac.h>`
+
+### Full pipeline example: normals → FPFH → SAC-IA → ICP refinement
+
+```cpp feature_registration.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/features/fpfh.h>
+#include <pcl/registration/ia_ransac.h>
+#include <pcl/registration/icp.h>
+#include <pcl/search/kdtree.h>
+#include <iostream>
+
+// Helper: downsample a cloud
+pcl::PointCloud<pcl::PointXYZ>::Ptr
+downsample(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float leaf)
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr out(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::VoxelGrid<pcl::PointXYZ> vg;
+  vg.setLeafSize(leaf, leaf, leaf);
+  vg.setInputCloud(cloud);
+  vg.filter(*out);
+  return out;
+}
+
+// Helper: estimate normals
+pcl::PointCloud<pcl::Normal>::Ptr
+estimate_normals(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float radius)
+{
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+  ne.setInputCloud(cloud);
+  ne.setSearchMethod(tree);
+  ne.setRadiusSearch(radius);
+  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+  ne.compute(*normals);
+  return normals;
+}
+
+// Helper: compute FPFH descriptors
+pcl::PointCloud<pcl::FPFHSignature33>::Ptr
+compute_fpfh(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+             const pcl::PointCloud<pcl::Normal>::Ptr  &normals,
+             float radius)
+{
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  pcl::FPFHEstimation<pcl::PointXYZ, pcl::Normal, pcl::FPFHSignature33> fpfh;
+  fpfh.setInputCloud(cloud);
+  fpfh.setInputNormals(normals);
+  fpfh.setSearchMethod(tree);
+  fpfh.setRadiusSearch(radius);
+  pcl::PointCloud<pcl::FPFHSignature33>::Ptr features(
+      new pcl::PointCloud<pcl::FPFHSignature33>);
+  fpfh.compute(*features);
+  return features;
+}
+
+int main()
+{
+  // --- Load clouds ---
+  pcl::PointCloud<pcl::PointXYZ>::Ptr source(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr target(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("source.pcd", *source);
+  pcl::PCDReader().read("target.pcd", *target);
+
+  // --- Downsample ---
+  auto src_ds = downsample(source, 0.05f);
+  auto tgt_ds = downsample(target, 0.05f);
+
+  // --- Normals (3 cm) ---
+  auto src_normals = estimate_normals(src_ds, 0.03f);
+  auto tgt_normals = estimate_normals(tgt_ds, 0.03f);
+
+  // --- FPFH descriptors (5 cm) ---
+  auto src_fpfh = compute_fpfh(src_ds, src_normals, 0.05f);
+  auto tgt_fpfh = compute_fpfh(tgt_ds, tgt_normals, 0.05f);
+
+  // --- SAC-IA initial alignment ---
+  pcl::SampleConsensusInitialAlignment<
+      pcl::PointXYZ, pcl::PointXYZ, pcl::FPFHSignature33> sac_ia;
+  sac_ia.setInputSource(src_ds);
+  sac_ia.setSourceFeatures(src_fpfh);
+  sac_ia.setInputTarget(tgt_ds);
+  sac_ia.setTargetFeatures(tgt_fpfh);
+  sac_ia.setMinSampleDistance(0.05f);
+  sac_ia.setMaxCorrespondenceDistance(0.1f);
+  sac_ia.setMaximumIterations(500);
+
+  pcl::PointCloud<pcl::PointXYZ> src_initial;
+  sac_ia.align(src_initial);
+  std::cout << "SAC-IA score: " << sac_ia.getFitnessScore() << "\n";
+
+  // --- ICP refinement ---
+  pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
+  icp.setInputSource(src_initial.makeShared());
+  icp.setInputTarget(target);
+  icp.setMaxCorrespondenceDistance(0.05);
+  icp.setMaximumIterations(100);
+  icp.setTransformationEpsilon(1e-8);
+  icp.setEuclideanFitnessEpsilon(1.0);
+
+  pcl::PointCloud<pcl::PointXYZ> aligned;
+  icp.align(aligned);
+  std::cout << "ICP score: " << icp.getFitnessScore() << "\n";
+
+  // Combined transformation
+  Eigen::Matrix4f transform =
+      icp.getFinalTransformation() * sac_ia.getFinalTransformation();
+  std::cout << "Final transform:\n" << transform << "\n";
+
+  pcl::PCDWriter().write("aligned_final.pcd", aligned);
+  return 0;
+}
+```
+
+```cmake CMakeLists.txt
+cmake_minimum_required(VERSION 3.5)
+project(feature_registration)
+
+find_package(PCL 1.8 REQUIRED COMPONENTS common io filters features registration)
+include_directories(${PCL_INCLUDE_DIRS})
+link_directories(${PCL_LIBRARY_DIRS})
+add_definitions(${PCL_DEFINITIONS})
+
+add_executable(feature_registration feature_registration.cpp)
+target_link_libraries(feature_registration ${PCL_LIBRARIES})
+```
+
+---
+
+## Correspondence estimation and rejection
+
+PCL separates the correspondence finding step from the transformation estimation step. This allows fine-grained control over which correspondences are used.
+
+<Tabs>
+  <Tab title="CorrespondenceEstimation">
+
+```cpp
+#include <pcl/registration/correspondence_estimation.h>
+
+pcl::registration::CorrespondenceEstimation<pcl::PointXYZ, pcl::PointXYZ> ce;
+ce.setInputSource(cloud_source);
+ce.setInputTarget(cloud_target);
+
+pcl::Correspondences all_correspondences;
+ce.determineCorrespondences(all_correspondences);
+// all_correspondences[i].index_query  → source point index
+// all_correspondences[i].index_match  → nearest target point index
+// all_correspondences[i].distance     → squared Euclidean distance
+```
+
+  </Tab>
+  <Tab title="CorrespondenceRejectorDistance">
+
+```cpp
+#include <pcl/registration/correspondence_rejection_distance.h>
+
+pcl::registration::CorrespondenceRejectorDistance rej;
+rej.setMaximumDistance(0.05f);  // reject correspondences > 5 cm
+rej.setInputCorrespondences(
+    pcl::CorrespondencesConstPtr(
+        new pcl::Correspondences(all_correspondences)));
+
+pcl::Correspondences good_correspondences;
+rej.getCorrespondences(good_correspondences);
+```
+
+  </Tab>
+  <Tab title="CorrespondenceRejectorSampleConsensus">
+
+```cpp
+#include <pcl/registration/correspondence_rejection_sample_consensus.h>
+
+pcl::registration::CorrespondenceRejectorSampleConsensus<pcl::PointXYZ> rej_ransac;
+rej_ransac.setInputSource(cloud_source);
+rej_ransac.setInputTarget(cloud_target);
+rej_ransac.setInlierThreshold(0.05);
+rej_ransac.setMaximumIterations(1000);
+rej_ransac.setInputCorrespondences(
+    pcl::CorrespondencesConstPtr(
+        new pcl::Correspondences(all_correspondences)));
+
+pcl::Correspondences inlier_correspondences;
+rej_ransac.getCorrespondences(inlier_correspondences);
+```
+
+  </Tab>
+</Tabs>
+
+---
+
+## Transformation estimation
+
+Once inlier correspondences are available, `TransformationEstimationSVD` finds the minimum-mean-squared-error rigid transform via singular value decomposition.
+
+**Header:** `<pcl/registration/transformation_estimation_svd.h>`
+
+```cpp svd_estimation.cpp
+#include <pcl/registration/transformation_estimation_svd.h>
+
+pcl::registration::TransformationEstimationSVD<pcl::PointXYZ, pcl::PointXYZ> svd;
+Eigen::Matrix4f transform;
+svd.estimateRigidTransformation(*cloud_source, *cloud_target,
+                                 inlier_correspondences,
+                                 transform);
+// transform is the 4×4 rigid transformation matrix
+```
+
+<CardGroup cols={2}>
+  <Card title="TransformationEstimationSVD" icon="calculator">
+    Point-to-point minimisation. Best for isotropic noise. Default in ICP.
+  </Card>
+  <Card title="TransformationEstimationPointToPlane" icon="layers">
+    Minimises point-to-plane distance. Better convergence on smooth surfaces. Requires normals.
+  </Card>
+</CardGroup>
+
+To use point-to-plane in ICP, replace the transformation estimator:
+
+```cpp
+#include <pcl/registration/transformation_estimation_point_to_plane_lls.h>
+
+pcl::IterativeClosestPoint<pcl::PointNormal, pcl::PointNormal> icp_p2pl;
+icp_p2pl.setTransformationEstimation(
+    pcl::make_shared<
+        pcl::registration::TransformationEstimationPointToPlane<
+            pcl::PointNormal, pcl::PointNormal>>());
+icp_p2pl.setInputSource(source_with_normals);
+icp_p2pl.setInputTarget(target_with_normals);
+// …
+```

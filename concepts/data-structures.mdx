@@ -1,0 +1,256 @@
+---
+title: "Data structures"
+description: "A guide to the core data structures in PCL: PointCloud, KdTreeFLANN, OctreePointCloudSearch, and the auxiliary types used to pass results between algorithms."
+---
+
+PCL provides a small set of data structures that appear in almost every processing pipeline. Understanding them before diving into individual algorithms will save you time tracing type errors and unexpected copies.
+
+## pcl::PointCloud\<T\>
+
+`pcl::PointCloud<T>` (defined in `<pcl/point_cloud.h>`) is the primary container for point data. It wraps a `std::vector<PointT, Eigen::aligned_allocator<PointT>>` and adds metadata fields required by PCL algorithms.
+
+### Key members
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `points` | `std::vector<PointT, ...>` | The flat array of point structs |
+| `width` | `uint32_t` | Points per row (or total points for unorganized clouds) |
+| `height` | `uint32_t` | Number of rows; `1` for unorganized clouds |
+| `is_dense` | `bool` | `true` if no point has NaN/Inf coordinates |
+| `sensor_origin_` | `Eigen::Vector4f` | Sensor translation at acquisition time |
+| `sensor_orientation_` | `Eigen::Quaternionf` | Sensor rotation at acquisition time |
+| `header` | `pcl::PCLHeader` | Timestamp and frame ID |
+
+### Modifying a cloud
+
+```cpp
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
+    new pcl::PointCloud<pcl::PointXYZ>);
+
+// Reserve space then fill
+cloud->resize(100);          // sets width=100, height=1
+cloud->points[0].x = 1.0f;
+
+// Or append one at a time
+cloud->push_back(pcl::PointXYZ(1.0f, 2.0f, 3.0f));
+
+// Concatenate two clouds with operator+=
+pcl::PointCloud<pcl::PointXYZ> cloud_b;
+cloud_b.push_back(pcl::PointXYZ(4.0f, 5.0f, 6.0f));
+*cloud += cloud_b;           // appends cloud_b; sets height=1, updates width
+```
+
+### Memory management
+
+Every PCL algorithm takes its input as a `shared_ptr`. Use the `Ptr` typedef defined on `PointCloud`:
+
+```cpp
+// Equivalent ways to create a shared_ptr to a cloud
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud1(new pcl::PointCloud<pcl::PointXYZ>);
+auto cloud2 = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+```
+
+<Tip>
+Prefer `pcl::make_shared` — it allocates the object and the control block in one allocation, which is more cache-friendly and avoids a double-free if the constructor throws.
+</Tip>
+
+---
+
+## pcl::KdTreeFLANN\<T\>
+
+`pcl::KdTreeFLANN<T>` (in `<pcl/kdtree/kdtree_flann.h>`) builds a kd-tree over an input cloud using the FLANN library and provides fast nearest-neighbor queries. It is the default search structure used internally by feature estimation, normal estimation, segmentation, and registration modules.
+
+### Workflow
+
+1. Create the tree.
+2. Call `setInputCloud` to build the index.
+3. Query with `nearestKSearch` or `radiusSearch`.
+
+```cpp
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <vector>
+#include <iostream>
+
+int main()
+{
+    // Build an input cloud
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
+        new pcl::PointCloud<pcl::PointXYZ>);
+    cloud->resize(500);
+    for (auto& p : *cloud)
+    {
+        p.x = 1024.0f * rand() / (RAND_MAX + 1.0f);
+        p.y = 1024.0f * rand() / (RAND_MAX + 1.0f);
+        p.z = 1024.0f * rand() / (RAND_MAX + 1.0f);
+    }
+
+    // Build the kd-tree index
+    pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+    kdtree.setInputCloud(cloud);
+
+    // Find the 5 nearest neighbors of a query point
+    pcl::PointXYZ query(512.0f, 512.0f, 512.0f);
+    std::vector<int>   k_indices(5);
+    std::vector<float> k_sqr_distances(5);
+
+    int found = kdtree.nearestKSearch(query, 5, k_indices, k_sqr_distances);
+    std::cout << "Found " << found << " neighbors\n";
+    for (int i = 0; i < found; ++i)
+    {
+        std::cout << "  index=" << k_indices[i]
+                  << "  sq_dist=" << k_sqr_distances[i] << "\n";
+    }
+
+    // Find all neighbors within radius 50.0
+    std::vector<int>   r_indices;
+    std::vector<float> r_sqr_distances;
+    int count = kdtree.radiusSearch(query, 50.0f, r_indices, r_sqr_distances);
+    std::cout << "Neighbors within radius: " << count << "\n";
+
+    return 0;
+}
+```
+
+<Note>
+`nearestKSearch` returns squared Euclidean distances, not Euclidean distances. Take `std::sqrt` if you need the actual distance.
+</Note>
+
+### Key methods
+
+| Method | Description |
+|--------|-------------|
+| `setInputCloud(cloud)` | Builds the index over the supplied cloud |
+| `nearestKSearch(point, k, indices, sq_dists)` | Returns the k closest points |
+| `radiusSearch(point, radius, indices, sq_dists)` | Returns all points within `radius` |
+| `setEpsilon(eps)` | Allows approximate search; `0` means exact |
+| `setSortedResults(sorted)` | Whether results are sorted by distance (default: `true`) |
+
+---
+
+## pcl::octree::OctreePointCloudSearch\<T\>
+
+`pcl::octree::OctreePointCloudSearch<T>` (in `<pcl/octree/octree_search.h>`) partitions a point cloud into an octree and offers neighbor searches as well as voxel-level queries. It is useful when you need spatial partitioning for downsampling or occupancy checking in addition to nearest-neighbor search.
+
+### Workflow
+
+```cpp
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/octree/octree_search.h>
+#include <vector>
+#include <iostream>
+
+int main()
+{
+    // Build an input cloud
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
+        new pcl::PointCloud<pcl::PointXYZ>);
+    cloud->resize(1000);
+    for (auto& p : *cloud)
+    {
+        p.x = 128.0f * rand() / (RAND_MAX + 1.0f);
+        p.y = 128.0f * rand() / (RAND_MAX + 1.0f);
+        p.z = 128.0f * rand() / (RAND_MAX + 1.0f);
+    }
+
+    // Resolution (leaf voxel side length in metres)
+    float resolution = 0.5f;
+    pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> octree(resolution);
+
+    octree.setInputCloud(cloud);
+    octree.addPointsFromInputCloud();
+
+    pcl::PointXYZ query(64.0f, 64.0f, 64.0f);
+
+    // Voxel search — all points in the same voxel as the query
+    std::vector<int> voxel_indices;
+    if (octree.voxelSearch(query, voxel_indices))
+    {
+        std::cout << "Points in voxel: " << voxel_indices.size() << "\n";
+    }
+
+    // k-nearest neighbor search
+    std::vector<int>   k_indices(10);
+    std::vector<float> k_sqr_distances(10);
+    octree.nearestKSearch(query, 10, k_indices, k_sqr_distances);
+
+    // Radius search
+    std::vector<int>   r_indices;
+    std::vector<float> r_sqr_distances;
+    octree.radiusSearch(query, 5.0f, r_indices, r_sqr_distances);
+    std::cout << "Neighbors within radius: " << r_indices.size() << "\n";
+
+    return 0;
+}
+```
+
+### Key methods
+
+| Method | Description |
+|--------|-------------|
+| `setInputCloud(cloud)` | Associates the cloud with the octree |
+| `addPointsFromInputCloud()` | Inserts all cloud points into the tree |
+| `voxelSearch(point, indices)` | Returns all points in the same leaf voxel |
+| `nearestKSearch(point, k, indices, sq_dists)` | k-nearest neighbor search |
+| `radiusSearch(point, radius, indices, sq_dists)` | Radius search |
+
+<Note>
+Unlike `KdTreeFLANN`, the octree requires you to call `addPointsFromInputCloud()` explicitly after `setInputCloud`. This separation lets you add points incrementally.
+</Note>
+
+---
+
+## Auxiliary types
+
+These lightweight types carry results and configuration between pipeline stages.
+
+### pcl::PointIndices
+
+```cpp
+#include <pcl/PointIndices.h>
+
+pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+// inliers->indices is a std::vector<int>
+```
+
+`pcl::PointIndices` wraps a `std::vector<int>` of indices into a cloud, plus a `pcl::PCLHeader`. Segmentation and RANSAC algorithms write their results into a `PointIndices`. Pass `PointIndices` to `pcl::ExtractIndices` to produce a new cloud containing only those points.
+
+### pcl::Correspondences
+
+```cpp
+#include <pcl/correspondence.h>
+
+pcl::Correspondences correspondences;
+// Each pcl::Correspondence holds: index_query, index_match, distance
+```
+
+A `pcl::Correspondences` is a `std::vector<pcl::Correspondence>`. Registration and feature-matching classes write matched point pairs into this type. Correspondence rejection filters (`pcl::registration::CorrespondenceRejector*`) take it as input and output a filtered set.
+
+### pcl::ModelCoefficients
+
+```cpp
+#include <pcl/ModelCoefficients.h>
+
+pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+// coefficients->values is a std::vector<float>
+// For a plane ax+by+cz+d=0: values = {a, b, c, d}
+```
+
+RANSAC-based segmentation (`pcl::SACSegmentation`) writes the fitted model parameters into `ModelCoefficients`. The layout of `values` depends on the model type (plane, sphere, cylinder, etc.).
+
+### pcl::PolygonMesh
+
+```cpp
+#include <pcl/PolygonMesh.h>
+
+pcl::PolygonMesh mesh;
+// mesh.cloud     — PCLPointCloud2 with vertex data
+// mesh.polygons  — std::vector<pcl::Vertices>, each a list of vertex indices
+```
+
+Surface reconstruction algorithms (`pcl::GreedyProjectionTriangulation`, `pcl::Poisson`, `pcl::ConvexHull`, etc.) write their output into `pcl::PolygonMesh`. Use `pcl::io::savePLYFile` or `pcl::io::saveVTKFile` to persist the result.

@@ -1,0 +1,161 @@
+---
+title: "Quickstart"
+description: "Write your first PCL program: load a PCD file, apply a VoxelGrid filter to downsample it, and save the result."
+---
+
+This guide walks you through creating a minimal CMake project that reads a point cloud from a PCD file, downsamples it using `pcl::VoxelGrid`, and writes the result back to disk.
+
+<Steps>
+  <Step title="Install PCL">
+    Follow the [Installation guide](/getting-started/installation) for your platform. You need PCL with at least the `common`, `io`, and `filters` modules available.
+
+    Confirm the installation by checking that CMake can locate PCL:
+
+    ```bash
+    # Linux / macOS
+    pkg-config --modversion pcl_common-1.15
+    ```
+  </Step>
+
+  <Step title="Create your project directory">
+    Create a new directory for the project and add two files inside it:
+
+    ```bash
+    mkdir pcl_quickstart && cd pcl_quickstart
+    ```
+
+    Your project will contain:
+
+    ```
+    pcl_quickstart/
+    ├── CMakeLists.txt
+    └── main.cpp
+    ```
+  </Step>
+
+  <Step title="Write the source files">
+    <CodeGroup>
+
+    ```cmake CMakeLists.txt
+    cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
+    project(pcl_quickstart)
+
+    find_package(PCL 1.3 REQUIRED COMPONENTS common io filters)
+
+    include_directories(${PCL_INCLUDE_DIRS})
+    link_directories(${PCL_LIBRARY_DIRS})
+    add_definitions(${PCL_DEFINITIONS})
+
+    add_executable(pcl_quickstart main.cpp)
+    target_link_libraries(pcl_quickstart ${PCL_LIBRARIES})
+    ```
+
+    ```cpp main.cpp
+    #include <iostream>
+    #include <pcl/io/pcd_io.h>
+    #include <pcl/point_types.h>
+    #include <pcl/filters/voxel_grid.h>
+
+    int main(int argc, char** argv)
+    {
+      if (argc < 3) {
+        std::cerr << "Usage: pcl_quickstart <input.pcd> <output.pcd>\n";
+        return -1;
+      }
+
+      // Load the input point cloud
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+      if (pcl::io::loadPCDFile<pcl::PointXYZ>(argv[1], *cloud) == -1) {
+        PCL_ERROR("Couldn't read file %s\n", argv[1]);
+        return -1;
+      }
+      std::cout << "Loaded " << cloud->width * cloud->height
+                << " points from " << argv[1] << "\n";
+
+      // Apply VoxelGrid filter to downsample
+      pcl::VoxelGrid<pcl::PointXYZ> vg;
+      vg.setInputCloud(cloud);
+      vg.setLeafSize(0.01f, 0.01f, 0.01f);   // 1 cm leaf size
+
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(
+        new pcl::PointCloud<pcl::PointXYZ>);
+      vg.filter(*cloud_filtered);
+
+      std::cout << "After VoxelGrid: " << cloud_filtered->width * cloud_filtered->height
+                << " points\n";
+
+      // Save the filtered cloud
+      pcl::io::savePCDFileASCII(argv[2], *cloud_filtered);
+      std::cout << "Saved to " << argv[2] << "\n";
+
+      return 0;
+    }
+    ```
+
+    </CodeGroup>
+
+    **What the code does:**
+
+    - `pcl::io::loadPCDFile<pcl::PointXYZ>` reads a `.pcd` file directly into a typed `PointCloud<PointXYZ>`. It returns `-1` on failure.
+    - `pcl::VoxelGrid<pcl::PointXYZ>` divides the cloud into a 3D grid of 1 cm voxels and replaces all points in each voxel with their centroid.
+    - `pcl::io::savePCDFileASCII` writes the result as a human-readable ASCII PCD file.
+  </Step>
+
+  <Step title="Build the project">
+    Configure with CMake and compile:
+
+    ```bash
+    mkdir build && cd build
+    cmake ..
+    make
+    ```
+
+    On Windows with vcpkg, pass the toolchain file:
+
+    ```powershell
+    cmake -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ..
+    cmake --build . --config Release
+    ```
+  </Step>
+
+  <Step title="Download a sample PCD file and run">
+    Download the tutorial dataset:
+
+    ```bash
+    wget https://raw.githubusercontent.com/PointCloudLibrary/data/master/tutorials/table_scene_lms400.pcd
+    ```
+
+    Run the program:
+
+    ```bash
+    ./pcl_quickstart table_scene_lms400.pcd output_downsampled.pcd
+    ```
+
+    You should see output similar to:
+
+    ```
+    Loaded 460400 points from table_scene_lms400.pcd
+    After VoxelGrid: 41049 points
+    Saved to output_downsampled.pcd
+    ```
+
+    The VoxelGrid filter reduced the cloud from 460,400 points to approximately 41,000 — about a 9× reduction.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="PCD file format" icon="file-code" href="/getting-started/pcd-format">
+    Learn the structure of the PCD header and the ASCII and binary data modes.
+  </Card>
+  <Card title="Filters module" icon="filter" href="/modules/filters">
+    Explore PassThrough, StatisticalOutlierRemoval, RadiusOutlierRemoval, and other filters.
+  </Card>
+  <Card title="CMake integration" icon="gear" href="/guides/cmake-integration">
+    Link only the PCL modules your project needs and control compiler flags.
+  </Card>
+  <Card title="Core concepts" icon="cube" href="/concepts/point-types">
+    Understand `PointT` types, the `PointCloud` container, and organized vs. unorganized clouds.
+  </Card>
+</CardGroup>

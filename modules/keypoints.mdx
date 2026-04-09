@@ -1,0 +1,263 @@
+---
+title: "Keypoints"
+description: "Detect distinctive points in a point cloud for efficient descriptor matching and alignment using PCL keypoint detectors."
+keywords: ["pcl", "keypoints", "NARF", "SIFT", "Harris 3D", "ISS", "keypoint detection"]
+---
+
+## Overview
+
+Keypoint detectors identify a sparse set of geometrically distinctive points in a cloud. Extracting descriptors only at keypoints — rather than at every point — dramatically reduces the matching problem without sacrificing alignment quality.
+
+A keypoint must be:
+
+- **Repeatable** — detected at the same geometric location across different views or noise levels
+- **Localised** — not spread across a featureless surface
+- **Distinctive** — surrounded by neighbourhood geometry that can be reliably described
+
+<CardGroup cols={2}>
+  <Card title="Scale-space detectors" icon="layers">
+    NARF, SIFT. Detect keypoints at multiple resolution scales.
+  </Card>
+  <Card title="Geometric detectors" icon="triangle">
+    Harris 3D, ISS. Exploit surface curvature or eigenvalue saliency.
+  </Card>
+</CardGroup>
+
+All keypoint classes inherit from `pcl::Keypoint<PointInT, PointOutT>`:
+
+```cpp
+detector.setInputCloud(cloud);
+// configure parameters …
+detector.compute(keypoints);
+```
+
+---
+
+## NARF
+
+`pcl::NarfKeypoint` detects Normal Aligned Radial Feature keypoints on a range image. Candidate points must lie on object boundaries or in regions with high surface variation, making NARF well-suited to structured environments captured by rotating LiDARs.
+
+**Header:** `<pcl/keypoints/narf_keypoint.h>`
+**Requires:** A `pcl::RangeImage` (not a raw point cloud directly).
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setRangeImageBorderExtractor` | `void setRangeImageBorderExtractor(RangeImageBorderExtractor *)` | Border extractor used to find surface boundaries. |
+| `setRangeImage` | `void setRangeImage(const RangeImage *)` | The range image to detect keypoints in. |
+| `getParameters` | `NarfKeypoint::Parameters &getParameters()` | Access to all tuning parameters. |
+
+### Code example
+
+```cpp narf_keypoints.cpp
+#include <pcl/range_image/range_image.h>
+#include <pcl/keypoints/narf_keypoint.h>
+#include <pcl/features/range_image_border_extractor.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+int main()
+{
+  // Load cloud and create a range image from it
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("scene.pcd", *cloud);
+
+  float angular_resolution = pcl::deg2rad(0.5f);
+  float support_size = 0.2f; // 20 cm
+
+  pcl::RangeImage::CoordinateFrame coordinate_frame = pcl::RangeImage::CAMERA_FRAME;
+  Eigen::Affine3f scene_sensor_pose(Eigen::Affine3f::Identity());
+
+  pcl::RangeImage range_image;
+  range_image.createFromPointCloud(
+      *cloud, angular_resolution,
+      pcl::deg2rad(360.0f), pcl::deg2rad(180.0f),
+      scene_sensor_pose, coordinate_frame, 0.0f, 0.0f, 1);
+
+  // Detect NARF keypoints
+  pcl::RangeImageBorderExtractor range_image_border_extractor;
+  pcl::NarfKeypoint narf_keypoint_detector(&range_image_border_extractor);
+  narf_keypoint_detector.setRangeImage(&range_image);
+  narf_keypoint_detector.getParameters().support_size = support_size;
+
+  pcl::PointCloud<int> keypoint_indices;
+  narf_keypoint_detector.compute(keypoint_indices);
+
+  std::cout << "Detected " << keypoint_indices.size() << " NARF keypoints\n";
+
+  // Extract 3D positions of the keypoints
+  pcl::PointCloud<pcl::PointXYZ>::Ptr keypoints(new pcl::PointCloud<pcl::PointXYZ>);
+  keypoints->resize(keypoint_indices.size());
+  for (std::size_t i = 0; i < keypoint_indices.size(); ++i)
+    (*keypoints)[i].getVector3fMap() = range_image[keypoint_indices[i]].getVector3fMap();
+
+  return 0;
+}
+```
+
+---
+
+## SIFT on intensity
+
+`pcl::SIFTKeypoint<PointInT, PointOutT>` applies the Scale Invariant Feature Transform to the intensity (or any scalar) field of a point cloud. It searches for local extrema across a Gaussian scale space.
+
+**Header:** `<pcl/keypoints/sift_keypoint.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setScales` | `void setScales(float min_scale, int nr_octaves, int nr_scales_per_octave)` | Gaussian pyramid parameters. |
+| `setMinimumContrast` | `void setMinimumContrast(float min_contrast)` | Suppresses low-contrast detections. |
+
+```cpp sift_keypoints.cpp
+#include <pcl/keypoints/sift_keypoint.h>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>);
+  pcl::PCDReader().read("scene_intensity.pcd", *cloud);
+
+  pcl::SIFTKeypoint<pcl::PointXYZI, pcl::PointWithScale> sift;
+  sift.setInputCloud(cloud);
+
+  pcl::search::KdTree<pcl::PointXYZI>::Ptr tree(
+      new pcl::search::KdTree<pcl::PointXYZI>);
+  sift.setSearchMethod(tree);
+
+  // min_scale, nr_octaves, nr_scales_per_octave
+  sift.setScales(0.01f, 3, 4);
+  sift.setMinimumContrast(0.001f);
+
+  pcl::PointCloud<pcl::PointWithScale>::Ptr keypoints(
+      new pcl::PointCloud<pcl::PointWithScale>);
+  sift.compute(*keypoints);
+
+  std::cout << "Detected " << keypoints->size() << " SIFT keypoints\n";
+  return 0;
+}
+```
+
+<Note>
+  `pcl::SIFTKeypoint` requires an intensity field. Use `pcl::PointXYZI` or `pcl::PointXYZRGB` (intensity derived from colour). It is not applicable to plain `pcl::PointXYZ` clouds.
+</Note>
+
+---
+
+## Harris 3D
+
+`pcl::HarrisKeypoint3D<PointInT, PointOutT, NormalT>` extends the classical Harris corner detector to 3D surfaces by analysing eigenvalues of the surface normal covariance matrix. It supports five response functions selectable via `setMethod()`.
+
+**Header:** `<pcl/keypoints/harris_3d.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setMethod` | `void setMethod(ResponseMethod method)` | `HARRIS`, `NOBLE`, `LOWE`, `TOMASI`, or `CURVATURE`. |
+| `setThreshold` | `void setThreshold(float threshold)` | Minimum response value to be considered a keypoint. |
+| `setRadius` | `void setRadius(float radius)` | Search radius for computing the response. |
+| `setNonMaxSupression` | `void setNonMaxSupression(bool)` | Enable non-maximum suppression. |
+| `setRefine` | `void setRefine(bool)` | Refine keypoint position to the local response maximum. |
+
+```cpp harris3d.cpp
+#include <pcl/keypoints/harris_3d.h>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud(
+      new pcl::PointCloud<pcl::PointXYZRGBA>);
+  pcl::PCDReader().read("scene.pcd", *cloud);
+
+  pcl::HarrisKeypoint3D<pcl::PointXYZRGBA, pcl::PointXYZI> harris;
+  harris.setInputCloud(cloud);
+  harris.setNonMaxSupression(true);
+  harris.setRadius(0.04f);
+  harris.setThreshold(1e-6f);
+
+  pcl::PointCloud<pcl::PointXYZI>::Ptr keypoints(
+      new pcl::PointCloud<pcl::PointXYZI>);
+  harris.compute(*keypoints);
+
+  std::cout << "Detected " << keypoints->size() << " Harris keypoints\n";
+  return 0;
+}
+```
+
+---
+
+## ISS
+
+`pcl::ISSKeypoint3D<PointInT, PointOutT, NormalT>` detects Intrinsic Shape Signature keypoints by computing the scatter matrix of the neighbourhood and keeping points whose three eigenvalues are well-separated (high saliency).
+
+**Header:** `<pcl/keypoints/iss_3d.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setSalientRadius` | `void setSalientRadius(double r)` | Radius for computing the scatter matrix. |
+| `setNonMaxRadius` | `void setNonMaxRadius(double r)` | Radius for non-maximum suppression (typically `< salientRadius`). |
+| `setThreshold21` | `void setThreshold21(double t)` | Maximum ratio λ₂/λ₁. Points exceeding this are rejected. |
+| `setThreshold32` | `void setThreshold32(double t)` | Maximum ratio λ₃/λ₂. |
+| `setMinNeighbors` | `void setMinNeighbors(int n)` | Minimum neighbourhood size; sparser regions are skipped. |
+| `setNumberOfThreads` | `void setNumberOfThreads(int n)` | OpenMP parallelism (0 = auto). |
+
+### Code example
+
+```cpp iss_keypoints.cpp
+#include <pcl/keypoints/iss_3d.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/search/kdtree.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("object.pcd", *cloud);
+
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(
+      new pcl::search::KdTree<pcl::PointXYZ>);
+
+  pcl::ISSKeypoint3D<pcl::PointXYZ, pcl::PointXYZ> iss;
+  iss.setSearchMethod(tree);
+  iss.setInputCloud(cloud);
+  iss.setSalientRadius(6 * 0.005);  // 6 × model resolution
+  iss.setNonMaxRadius(4 * 0.005);   // 4 × model resolution
+  iss.setThreshold21(0.975);
+  iss.setThreshold32(0.975);
+  iss.setMinNeighbors(5);
+  iss.setNumberOfThreads(4);
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr keypoints(
+      new pcl::PointCloud<pcl::PointXYZ>);
+  iss.compute(*keypoints);
+
+  std::cout << "Detected " << keypoints->size() << " ISS keypoints\n";
+  return 0;
+}
+```
+
+<Tip>
+  Set the salient radius to approximately 6 × the cloud's spatial resolution (mean nearest-neighbour distance). You can estimate this with `pcl::computeResolution()`.
+</Tip>
+
+---
+
+## Choosing a keypoint detector
+
+| Detector | Input requirement | Speed | Repeatability | Best use |
+|----------|-------------------|-------|---------------|----------|
+| NARF | Range image | Medium | High on boundary edges | Structured LiDAR scans |
+| SIFT | Intensity / scalar field | Medium | High in texture-rich clouds | RGB-D data with intensity |
+| Harris 3D | XYZ (+ optional normals) | Fast | Medium | General-purpose, coloured clouds |
+| ISS | XYZ | Fast | High | Model-to-scene registration, object recognition |
+
+<Note>
+  ISS and Harris 3D are the most commonly used detectors for general-purpose feature-based registration pipelines using FPFH or SHOT descriptors.
+</Note>

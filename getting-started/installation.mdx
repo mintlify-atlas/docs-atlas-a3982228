@@ -1,0 +1,272 @@
+---
+title: "Installation"
+description: "Install PCL 1.15.1 on Linux, macOS, Windows, or Docker — using a package manager or building from source."
+---
+
+## Requirements
+
+Before installing PCL, make sure your system meets the minimum requirements:
+
+- **C++17** compatible compiler (GCC 7+, Clang 5+, MSVC 2019+)
+- **CMake** 3.16 or newer
+- **Boost** 1.65+, **Eigen** 3.3+, **FLANN** 1.9.1+ (handled automatically by package managers)
+
+<Tabs>
+  <Tab title="Linux">
+
+## Package manager (recommended)
+
+On Ubuntu and Debian, install the prebuilt package:
+
+```bash
+sudo apt update
+sudo apt install libpcl-dev
+```
+
+This installs all PCL modules, headers, and the mandatory dependencies (Boost, Eigen, FLANN, VTK).
+
+<Tip>
+  On Ubuntu 22.04 and later, `libpcl-dev` provides PCL 1.12+. For PCL 1.15.1 specifically, build from source using the steps below.
+</Tip>
+
+## Building from source
+
+<Steps>
+  <Step title="Install dependencies">
+    Install the build tools and mandatory third-party libraries:
+
+    ```bash
+    sudo apt update
+    sudo apt install build-essential cmake git \
+      libboost-all-dev libeigen3-dev libflann-dev \
+      libvtk9-dev libqhull-dev
+    ```
+  </Step>
+  <Step title="Download the source">
+    Clone the repository or download a release archive:
+
+    ```bash
+    git clone https://github.com/PointCloudLibrary/pcl.git
+    cd pcl
+    ```
+
+    To build a specific release, check out the corresponding tag:
+
+    ```bash
+    git checkout pcl-1.15.1
+    ```
+  </Step>
+  <Step title="Configure with CMake">
+    Create a build directory and run CMake. Use `Release` mode for production builds:
+
+    ```bash
+    mkdir build && cd build
+    cmake -DCMAKE_BUILD_TYPE=Release ..
+    ```
+
+    Run `ccmake ..` instead to interactively enable or disable optional modules such as `visualization`, `gpu`, or `apps`.
+  </Step>
+  <Step title="Compile and install">
+    Build using all available CPU cores and install system-wide:
+
+    ```bash
+    make -j$(nproc)
+    sudo make install
+    ```
+  </Step>
+</Steps>
+
+  </Tab>
+  <Tab title="macOS">
+
+## Homebrew (recommended)
+
+Install PCL and all its dependencies with a single command:
+
+```bash
+brew install pcl
+```
+
+Homebrew automatically installs Boost, Eigen, FLANN, VTK, and Qhull as dependencies.
+
+<Note>
+  Homebrew typically tracks the latest PCL release. Run `brew info pcl` to check which version is available.
+</Note>
+
+## Building from source
+
+<Steps>
+  <Step title="Install Xcode command line tools">
+    ```bash
+    xcode-select --install
+    ```
+  </Step>
+  <Step title="Install dependencies via Homebrew">
+    ```bash
+    brew install cmake boost eigen flann vtk qhull
+    ```
+  </Step>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/PointCloudLibrary/pcl.git
+    cd pcl
+    git checkout pcl-1.15.1
+    ```
+  </Step>
+  <Step title="Configure with CMake">
+    ```bash
+    mkdir build && cd build
+    cmake -DCMAKE_BUILD_TYPE=Release ..
+    ```
+  </Step>
+  <Step title="Build and install">
+    ```bash
+    make -j$(sysctl -n hw.logicalcpu)
+    sudo make install
+    ```
+  </Step>
+</Steps>
+
+  </Tab>
+  <Tab title="Windows">
+
+## vcpkg (recommended)
+
+[vcpkg](https://github.com/microsoft/vcpkg) is the easiest way to get PCL on Windows. It handles all dependencies automatically.
+
+<Steps>
+  <Step title="Install vcpkg">
+    Clone vcpkg and run the bootstrap script in PowerShell:
+
+    ```powershell
+    git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+    cd C:\vcpkg
+    .\bootstrap-vcpkg.bat
+    ```
+  </Step>
+  <Step title="Install PCL">
+    Install the 64-bit release of PCL with all common features:
+
+    ```powershell
+    .\vcpkg install pcl --triplet x64-windows
+    ```
+
+    To include the visualization module (requires VTK):
+
+    ```powershell
+    .\vcpkg install pcl[visualization] --triplet x64-windows
+    ```
+
+    To install everything:
+
+    ```powershell
+    .\vcpkg install "pcl[*]" --triplet x64-windows
+    ```
+  </Step>
+  <Step title="Integrate with CMake">
+    Pass the vcpkg toolchain file when configuring your project:
+
+    ```powershell
+    cmake -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ..
+    ```
+
+    After that, `find_package(PCL REQUIRED)` works without any extra configuration.
+  </Step>
+</Steps>
+
+<Warning>
+  On Windows, PCL is compiled with `PCL_ONLY_CORE_POINT_TYPES` enabled. If you link against an uncommon point type and see linker errors, add `#define PCL_NO_PRECOMPILE` before your PCL includes. See the [custom point types guide](/guides/custom-point-types) for details.
+</Warning>
+
+## Building from source with Visual Studio
+
+<Steps>
+  <Step title="Install prerequisites">
+    - Visual Studio 2019 or 2022 (Desktop C++ workload)
+    - CMake 3.16+ (download from cmake.org or install via Visual Studio Installer)
+    - Git for Windows
+  </Step>
+  <Step title="Install dependencies">
+    Use vcpkg to install dependencies, then build PCL itself from source, or download the dependency installers from the [PCL releases page](https://github.com/PointCloudLibrary/pcl/releases).
+  </Step>
+  <Step title="Configure with CMake GUI">
+    Open CMake GUI, set the source path to your cloned `pcl` folder, set the binary path (e.g. `C:\PCL\build`), and click **Configure**. Choose the **Visual Studio** generator matching your installed version.
+
+    Set `Boost_INCLUDE_DIR`, `EIGEN_INCLUDE_DIR`, and `VTK_DIR` if CMake does not find them automatically.
+  </Step>
+  <Step title="Generate and build">
+    Click **Generate** to create the solution file, then open `PCL.sln` in Visual Studio. Build the **ALL_BUILD** project in both **Release** and **Debug** configurations. Then build the **INSTALL** project to copy headers and binaries to `CMAKE_INSTALL_PREFIX`.
+  </Step>
+</Steps>
+
+  </Tab>
+  <Tab title="Docker">
+
+PCL maintains official Docker images on Docker Hub. Using Docker gives you a fully preconfigured build environment with all dependencies installed.
+
+<Steps>
+  <Step title="Install Docker">
+    If Docker is not already installed:
+
+    ```bash
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sh get-docker.sh
+    ```
+
+    Verify the installation:
+
+    ```bash
+    docker --version
+    ```
+  </Step>
+  <Step title="Pull the official PCL image">
+    Pull the image for Ubuntu 20.04 (or choose another tag from [Docker Hub](https://hub.docker.com/r/pointcloudlibrary/env/tags)):
+
+    ```bash
+    docker pull pointcloudlibrary/env:20.04
+    ```
+  </Step>
+  <Step title="Clone PCL source">
+    ```bash
+    git clone https://github.com/PointCloudLibrary/pcl.git
+    ```
+  </Step>
+  <Step title="Run the container">
+    Mount the cloned source into the container:
+
+    ```bash
+    docker run --user $(id -u):$(id -g) \
+      -v $PWD/pcl:/home \
+      --rm -it \
+      pointcloudlibrary/env:20.04 bash
+    ```
+  </Step>
+  <Step title="Build PCL inside the container">
+    Inside the container shell:
+
+    ```bash
+    cd /home
+    mkdir build && cd build
+    cmake -DCMAKE_BUILD_TYPE=Release ..
+    make -j$(nproc)
+    make install
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Changes you make inside `/home` inside the container are reflected on your host filesystem through the volume mount. The container itself is ephemeral and is removed when you exit (`--rm`).
+</Note>
+
+  </Tab>
+</Tabs>
+
+## Verifying the installation
+
+After installation, confirm PCL is discoverable by CMake:
+
+```bash
+cmake --find-package -DNAME=PCL -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST
+```
+
+Or simply create a minimal `CMakeLists.txt` that calls `find_package(PCL REQUIRED)` and run `cmake .` in that directory.

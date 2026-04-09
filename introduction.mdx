@@ -1,0 +1,97 @@
+---
+title: "Introduction"
+description: "An overview of the Point Cloud Library (PCL) — what it is, what you can build with it, and how its modules fit together."
+---
+
+The Point Cloud Library (PCL) is a standalone, large-scale open-source project for 2D/3D image and point cloud processing. Released under the BSD license, PCL is free for both commercial and research use. Version **1.15.1** is the current stable release.
+
+PCL is used across robotics, autonomous driving, computer vision, 3D scanning, augmented reality, and any domain where algorithms need to operate on spatial point data. It provides a unified C++17 API that covers the full processing pipeline — from raw sensor input through filtering, feature estimation, segmentation, registration, surface reconstruction, and interactive visualization.
+
+## What you can build with PCL
+
+<CardGroup cols={2}>
+  <Card title="Robotics perception" icon="robot">
+    Process LiDAR and depth-camera streams for obstacle detection, scene understanding, and manipulation planning.
+  </Card>
+  <Card title="Autonomous driving" icon="car">
+    Segment drivable surfaces, detect and track objects, and align successive scans for localization and mapping.
+  </Card>
+  <Card title="Computer vision" icon="eye">
+    Compute local feature descriptors, match keypoints across views, and perform 3D object recognition.
+  </Card>
+  <Card title="3D scanning & reconstruction" icon="mountain">
+    Register multiple scans into a consistent model, resample surfaces, and generate watertight meshes.
+  </Card>
+</CardGroup>
+
+## Module overview
+
+PCL is organized into focused, independently linkable modules. Each module has a well-defined responsibility and a set of dependencies on other modules.
+
+<CardGroup cols={3}>
+  <Card title="common" icon="cube" href="/modules/filters">
+    Core data structures (`PointCloud<T>`, point types), math utilities, and shared infrastructure used by every other module.
+  </Card>
+  <Card title="io" icon="file-import" href="/modules/io">
+    Read and write PCD, PLY, OBJ, and other formats. Capture point clouds from OpenNI, RealSense, and Velodyne devices.
+  </Card>
+  <Card title="filters" icon="filter" href="/modules/filters">
+    Downsample with VoxelGrid, remove outliers with StatisticalOutlierRemoval, crop with PassThrough, and more.
+  </Card>
+  <Card title="features" icon="shapes" href="/modules/features">
+    Estimate surface normals, FPFH, VFH, SHOT, and other 3D descriptors for recognition and registration tasks.
+  </Card>
+  <Card title="keypoints" icon="map-pin" href="/modules/features">
+    Detect stable interest points using NARF, SIFT3D, Harris3D, and other keypoint detectors.
+  </Card>
+  <Card title="segmentation" icon="scissors" href="/modules/segmentation">
+    Extract object clusters, fit geometric models with RANSAC, and segment organized point clouds.
+  </Card>
+  <Card title="registration" icon="arrows-rotate" href="/modules/registration">
+    Align point clouds with ICP, Generalized ICP, NDT, and feature-based initial alignment methods.
+  </Card>
+  <Card title="surface" icon="bezier-curve" href="/modules/surface">
+    Reconstruct surfaces with Greedy Projection, Poisson reconstruction, and MLS resampling.
+  </Card>
+  <Card title="visualization" icon="chart-scatter-3d" href="/modules/visualization">
+    Render point clouds and meshes interactively using PCLVisualizer, backed by VTK.
+  </Card>
+  <Card title="kdtree" icon="network-wired" href="/modules/filters">
+    Fast k-nearest neighbor and radius search using FLANN-backed kd-trees.
+  </Card>
+  <Card title="octree" icon="diagram-project" href="/modules/filters">
+    Hierarchical spatial decomposition for efficient search, compression, and change detection.
+  </Card>
+  <Card title="search" icon="magnifying-glass" href="/modules/filters">
+    Unified search interface over kd-trees, octrees, brute-force, and organized-dataset methods.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+PCL follows a template-based architecture. Most algorithms are implemented as class templates parameterized on a point type `PointT`. This lets you instantiate only the combinations you need, keeping compile times and binary sizes manageable.
+
+The central data structure is `pcl::PointCloud<PointT>`, defined in `common`. It stores a flat vector of points alongside metadata such as width, height, sensor origin, and sensor orientation. An _organized_ cloud (`height > 1`) preserves the 2D grid structure of a depth image; an _unorganized_ cloud (`height == 1`) is a flat list.
+
+Algorithms receive input through `setInputCloud()` and write output through a `filter()`, `compute()`, or `align()` call. Most intermediate results are also `pcl::PointCloud<PointT>` objects, so modules compose naturally.
+
+```
+Sensor / file  →  io  →  filters  →  features / keypoints
+                                   ↘  segmentation
+                                   ↘  registration
+                                   ↘  surface
+                                   ↘  visualization
+```
+
+## License and community
+
+PCL is released under the **BSD license** and is free for commercial and research use.
+
+- **Discord**: join the community chat at [discord.gg/JFFMAXS](https://discord.gg/JFFMAXS)
+- **Stack Overflow**: ask questions tagged [`point-cloud-library`](https://stackoverflow.com/questions/tagged/point-cloud-library)
+- **GitHub**: browse source and file issues at [github.com/PointCloudLibrary/pcl](https://github.com/PointCloudLibrary/pcl)
+- **API documentation**: [pointclouds.org/documentation](https://pointclouds.org/documentation/)
+
+<Note>
+  If you use PCL in a publication, cite the original ICRA 2011 paper by Rusu and Cousins. The BibTeX entry is in the [project README](https://github.com/PointCloudLibrary/pcl/blob/master/README.md#citation).
+</Note>

@@ -1,0 +1,174 @@
+---
+title: "Custom point types"
+description: "Define your own PointT struct with domain-specific fields and register it for use with PCL algorithms."
+keywords: ["point type", "PointT", "PCL_ADD_POINT4D", "POINT_CLOUD_REGISTER_POINT_STRUCT", "SSE alignment"]
+---
+
+PCL algorithms are templated on a point type `PointT`. When none of the built-in types—`PointXYZ`, `PointXYZI`, `PointXYZRGBA`, and others—carry the fields your application needs, you can define your own struct and register it so that PCL's reflection and I/O machinery can work with it.
+
+## Why custom point types exist
+
+PCL originated inside ROS, where point clouds needed to carry arbitrary per-point data. Rather than hard-coding field layouts, PCL made every algorithm a template. This lets the compiler generate code that works directly with your struct's memory layout, keeping both runtime performance and type safety intact.
+
+Common reasons to add a custom type:
+
+- Semantic labels from a segmentation pipeline
+- Confidence or probability scores alongside geometry
+- Time stamps or ring indices from a spinning lidar
+- Domain-specific features computed offline
+
+<Note>
+Check `point_types.hpp` before defining a new type. `PointXYZL` (label), `PointXYZRGBL`, `PointWithRange`, and others may already cover your use case.
+</Note>
+
+## SSE alignment and `PCL_ADD_POINT4D`
+
+SSE and AVX vector instructions require 16-byte-aligned memory. For x, y, z data, PCL provides the `PCL_ADD_POINT4D` macro, which expands to a union containing a `float data[4]` array and named `x`, `y`, `z` members. The fourth float is padding that keeps the struct aligned.
+
+```cpp
+// What PCL_ADD_POINT4D expands to (simplified)
+union {
+  float data[4];
+  struct {
+    float x;
+    float y;
+    float z;
+  };
+};
+```
+
+You must also mark the struct itself with `EIGEN_ALIGN16` (placed before or after the struct body depending on your compiler) and include `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` inside the struct so that heap-allocated instances are aligned correctly.
+
+<Warning>
+Omitting `EIGEN_ALIGN16` or `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` causes undefined behavior when the struct is used in Eigen operations or stored in `std::vector`. The symptom is often a segmentation fault that is hard to reproduce.
+</Warning>
+
+## Registering a point type
+
+PCL uses compile-time reflection to serialize fields to PCD files, convert between cloud types, and display field names. The `POINT_CLOUD_REGISTER_POINT_STRUCT` macro wires up this reflection by mapping each struct member to a string tag.
+
+The macro must be invoked in the **global namespace**, and the struct name must be **fully qualified**:
+
+```cpp
+POINT_CLOUD_REGISTER_POINT_STRUCT(MyPoint,
+  (float, x, x)
+  (float, y, y)
+  (float, z, z)
+  (float, label, label)
+)
+```
+
+Each tuple is `(C++ type, member name, field tag)`. The field tag is the string name used in PCD files and other serialization contexts.
+
+## Complete example
+
+The following example defines a point type that stores XYZ geometry plus a floating-point semantic label, then saves a small cloud to disk.
+
+```cpp
+#define PCL_NO_PRECOMPILE
+#include <pcl/memory.h>
+#include <pcl/pcl_macros.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/io/pcd_io.h>
+
+struct EIGEN_ALIGN16 MyPoint
+{
+  PCL_ADD_POINT4D;          // adds x, y, z + 16-byte padding
+  float label;
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(MyPoint,
+  (float, x, x)
+  (float, y, y)
+  (float, z, z)
+  (float, label, label)
+)
+
+int main()
+{
+  pcl::PointCloud<MyPoint> cloud;
+  cloud.resize(2);
+  cloud.width = 2;
+  cloud.height = 1;
+
+  cloud[0].x = 0.0f; cloud[0].y = 0.0f; cloud[0].z = 0.0f;
+  cloud[0].label = 1.0f;
+
+  cloud[1].x = 3.0f; cloud[1].y = 3.0f; cloud[1].z = 3.0f;
+  cloud[1].label = 2.0f;
+
+  pcl::io::savePCDFile("labeled.pcd", cloud);
+  return 0;
+}
+```
+
+<Note>
+You must define `PCL_NO_PRECOMPILE` before any PCL headers when using a custom point type with precompiled algorithms (PCL 1.7+). This forces inclusion of the templated implementations rather than linking against precompiled specializations that don't include your type.
+</Note>
+
+## Using the custom type with algorithms
+
+Because your type is not in PCL's precompiled instantiation list, you must also include the `impl/` header for each algorithm you use:
+
+```cpp
+#define PCL_NO_PRECOMPILE
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/impl/passthrough.hpp>  // required for custom types
+
+pcl::PassThrough<MyPoint> pass;
+pass.setInputCloud(cloud.makeShared());
+pass.setFilterFieldName("label");
+pass.setFilterLimits(1.0f, 1.0f);
+
+pcl::PointCloud<MyPoint> filtered;
+pass.filter(filtered);
+```
+
+If your code is a library used by others, consider adding explicit template instantiations so downstream consumers don't pay the compile-time cost:
+
+```cpp
+// myfilter.cpp
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/impl/passthrough.hpp>
+#include "my_point.h"
+
+template class pcl::PassThrough<MyPoint>;
+```
+
+## Built-in point types for reference
+
+<AccordionGroup>
+  <Accordion title="Geometry types">
+    | Type | Fields |
+    |------|--------|
+    | `PointXYZ` | `float x, y, z` + SSE padding |
+    | `PointXY` | `float x, y` |
+    | `PointXYZI` | `float x, y, z, intensity` |
+    | `PointWithRange` | `float x, y, z, range` |
+    | `PointWithScale` | `float x, y, z, scale` |
+    | `PointWithViewpoint` | `float x, y, z, vp_x, vp_y, vp_z` |
+  </Accordion>
+  <Accordion title="Color and normal types">
+    | Type | Fields |
+    |------|--------|
+    | `PointXYZRGBA` | `float x, y, z; uint32_t rgba` |
+    | `PointXYZRGB` | Same as `PointXYZRGBA` |
+    | `Normal` | `float normal[3], curvature` |
+    | `PointNormal` | `float x, y, z; float normal[3], curvature` |
+    | `PointXYZRGBNormal` | `float x, y, z, normal[3], curvature; uint32_t rgba` |
+    | `PointXYZINormal` | `float x, y, z, intensity, normal[3], curvature` |
+    | `PointSurfel` | XYZ + normals + RGBA + radius + confidence + curvature |
+  </Accordion>
+  <Accordion title="Feature descriptor types">
+    | Type | Fields |
+    |------|--------|
+    | `PFHSignature125` | `float histogram[125]` |
+    | `FPFHSignature33` | `float histogram[33]` |
+    | `VFHSignature308` | `float histogram[308]` |
+    | `Narf36` | `float x, y, z, roll, pitch, yaw; float descriptor[36]` |
+    | `PrincipalCurvatures` | `float principal_curvature[3], pc1, pc2` |
+    | `Histogram<N>` | `float histogram[N]` (template) |
+  </Accordion>
+</AccordionGroup>

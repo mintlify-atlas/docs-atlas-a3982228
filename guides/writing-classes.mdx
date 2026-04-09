@@ -1,0 +1,320 @@
+---
+title: "Writing a new PCL class"
+description: "Structure, implement, and integrate a new algorithm class into PCL, following the Filter or PCLBase inheritance pattern."
+keywords: ["PCL class", "Filter", "PCLBase", "applyFilter", "template instantiation", "bilateral filter"]
+---
+
+PCL algorithms follow a consistent class structure built on top of `pcl::PCLBase<PointT>` and its subclasses. Learning this structure lets you write code that integrates cleanly with the rest of the library—sharing input cloud handling, index subsetting, and the broader PCL API conventions.
+
+This guide walks through converting a standalone algorithm into a proper PCL filter class, using a bilateral filter as the running example.
+
+## Class hierarchy
+
+Most new classes fit into one of these two base classes:
+
+| Base class | Use when |
+|------------|----------|
+| `pcl::Filter<PointT>` | The algorithm reads one cloud and produces one cloud (filtering, smoothing, downsampling). |
+| `pcl::PCLBase<PointT>` | The algorithm does not produce a cloud output (feature estimation, segmentation that writes indices, etc.). |
+
+`pcl::Filter<PointT>` itself inherits from `pcl::PCLBase<PointT>`, so both give you `setInputCloud`, `setIndices`, and the `input_` / `indices_` member variables for free.
+
+## File layout
+
+Place your files in the appropriate module directory. For a filter named `BilateralFilter`:
+
+```
+filters/
+├── include/pcl/filters/
+│   ├── bilateral.h          # class declaration
+│   └── impl/
+│       └── bilateral.hpp    # templated implementation
+└── src/
+    └── bilateral.cpp        # explicit template instantiations
+```
+
+This separation is the key to PCL's compile-time strategy. The header declares the interface. The `impl/` file contains templated code that most users never need to compile themselves. The `.cpp` file precompiles the common specializations so that linking is fast.
+
+## Workflow
+
+<Steps>
+  <Step title="Create the header file">
+    Declare the class in `include/pcl/filters/bilateral.h`. Inherit from `Filter<PointT>`, bring in `input_` and `indices_` with `using` declarations, and declare `applyFilter` as the override entry point.
+
+    ```cpp
+    #pragma once
+
+    /*
+     * SPDX-License-Identifier: BSD-3-Clause
+     *
+     *  Point Cloud Library (PCL) - www.pointclouds.org
+     *  Copyright (c) 2014-, Open Perception Inc.
+     *
+     *  All rights reserved
+     */
+
+    #include <pcl/filters/filter.h>
+    #include <pcl/kdtree/kdtree.h>
+
+    namespace pcl
+    {
+      /** \brief A bilateral filter for intensity point clouds.
+        * \note Based on: C. Tomasi and R. Manduchi, "Bilateral Filtering for
+        * Gray and Color Images," ICCV 1998.
+        * \author Your Name
+        */
+      template <typename PointT>
+      class BilateralFilter : public Filter<PointT>
+      {
+        using Filter<PointT>::input_;
+        using Filter<PointT>::indices_;
+        typedef typename Filter<PointT>::PointCloud PointCloud;
+        typedef typename pcl::KdTree<PointT>::Ptr KdTreePtr;
+
+        public:
+          /** \brief Constructor. Sets half-size to 0 and std dev to max double. */
+          BilateralFilter ()
+            : sigma_s_ (0)
+            , sigma_r_ (std::numeric_limits<double>::max ())
+          {}
+
+          /** \brief Filter the input data and store results in output.
+            * \param[out] output the resultant point cloud
+            */
+          void applyFilter (PointCloud &output);
+
+          /** \brief Set the spatial half-size of the bilateral filter window.
+            * \param[in] sigma_s half-size in the same units as the point coordinates
+            */
+          inline void setHalfSize (double sigma_s) { sigma_s_ = sigma_s; }
+
+          /** \brief Get the spatial half-size. */
+          double getHalfSize () const { return sigma_s_; }
+
+          /** \brief Set the standard deviation in intensity space.
+            * \param[in] sigma_r standard deviation
+            */
+          inline void setStdDev (double sigma_r) { sigma_r_ = sigma_r; }
+
+          /** \brief Get the intensity standard deviation. */
+          double getStdDev () const { return sigma_r_; }
+
+          /** \brief Set the search method used for neighbor queries.
+            * \param[in] tree a pointer to the spatial search object
+            */
+          void setSearchMethod (const KdTreePtr &tree) { tree_ = tree; }
+
+        private:
+          /** \brief Gaussian kernel function. */
+          inline double kernel (double x, double sigma)
+          {
+            return std::exp (-(x * x) / (2 * sigma * sigma));
+          }
+
+          /** \brief Compute the weighted intensity for one point.
+            * \param[in] pid      the point index to compute the weight for
+            * \param[in] indices  neighbor indices from a radius search
+            * \param[in] distances squared distances to each neighbor
+            * \return weighted intensity value
+            */
+          double computePointWeight (int pid,
+                                     const std::vector<int> &indices,
+                                     const std::vector<float> &distances);
+
+          double sigma_s_;   ///< spatial half-size
+          double sigma_r_;   ///< intensity standard deviation
+          KdTreePtr tree_;   ///< spatial search structure
+      };
+    }
+    ```
+  </Step>
+
+  <Step title="Implement the template in the impl/ file">
+    Write the method bodies in `include/pcl/filters/impl/bilateral.hpp`. All template code lives here so it can be included by the `.cpp` instantiation file.
+
+    At the bottom of the file, declare the `PCL_INSTANTIATE` macro entry that the `.cpp` file will invoke.
+
+    ```cpp
+    #pragma once
+
+    #include <pcl/filters/bilateral.h>
+    #include <pcl/kdtree/kdtree_flann.h>
+    #include <pcl/kdtree/organized_data.h>
+
+    template <typename PointT> double
+    pcl::BilateralFilter<PointT>::computePointWeight (
+        int pid,
+        const std::vector<int> &indices,
+        const std::vector<float> &distances)
+    {
+      double BF = 0, W = 0;
+
+      for (std::size_t n_id = 0; n_id < indices.size (); ++n_id)
+      {
+        double id = indices[n_id];
+        double dist = std::sqrt (distances[n_id]);
+        double intensity_dist =
+          std::abs ((*input_)[pid].intensity - (*input_)[id].intensity);
+
+        double weight = kernel (dist, sigma_s_) * kernel (intensity_dist, sigma_r_);
+        BF += weight * (*input_)[id].intensity;
+        W  += weight;
+      }
+      return BF / W;
+    }
+
+    template <typename PointT> void
+    pcl::BilateralFilter<PointT>::applyFilter (PointCloud &output)
+    {
+      if (sigma_s_ == 0)
+      {
+        PCL_ERROR ("[pcl::BilateralFilter::applyFilter] "
+                   "Set a non-zero half-size before calling filter().\n");
+        return;
+      }
+      if (!tree_)
+      {
+        if (input_->isOrganized ())
+          tree_.reset (new pcl::OrganizedNeighbor<PointT> ());
+        else
+          tree_.reset (new pcl::KdTreeFLANN<PointT> (false));
+      }
+      tree_->setInputCloud (input_);
+
+      std::vector<int>   k_indices;
+      std::vector<float> k_distances;
+
+      output = *input_;
+
+      // Iterate over the index subset (the full cloud if no indices were set)
+      for (std::size_t i = 0; i < indices_->size (); ++i)
+      {
+        tree_->radiusSearch ((*indices_)[i], sigma_s_ * 2, k_indices, k_distances);
+        output[(*indices_)[i]].intensity =
+          computePointWeight ((*indices_)[i], k_indices, k_distances);
+      }
+    }
+
+    #define PCL_INSTANTIATE_BilateralFilter(T) \
+      template class PCL_EXPORTS pcl::BilateralFilter<T>;
+    ```
+  </Step>
+
+  <Step title="Add explicit instantiations in the .cpp file">
+    Create `src/bilateral.cpp` to precompile the specializations that PCL ships. Use `PCL_INSTANTIATE` with a type list rather than hand-writing each one.
+
+    ```cpp
+    #include <pcl/point_types.h>
+    #include <pcl/impl/instantiate.hpp>
+    #include <pcl/filters/bilateral.h>
+    #include <pcl/filters/impl/bilateral.hpp>
+
+    // BilateralFilter requires an intensity field, so only instantiate
+    // types that carry intensity data.
+    PCL_INSTANTIATE(BilateralFilter, (pcl::PointXYZI)(pcl::PointXYZINormal));
+    ```
+
+    If you want to instantiate for all XYZ types, use the `PCL_XYZ_POINT_TYPES` predefined list instead:
+
+    ```cpp
+    PCL_INSTANTIATE(BilateralFilter, PCL_XYZ_POINT_TYPES);
+    ```
+  </Step>
+
+  <Step title="Register the files in CMakeLists.txt">
+    Add each file to the three variable lists in the module's `CMakeLists.txt`:
+
+    ```cmake
+    set(srcs
+      src/conditional_removal.cpp
+      # ... existing entries ...
+      src/bilateral.cpp
+    )
+
+    set(incs
+      include/pcl/${SUBSYS_NAME}/conditional_removal.h
+      # ...
+      include/pcl/${SUBSYS_NAME}/bilateral.h
+    )
+
+    set(impl_incs
+      include/pcl/${SUBSYS_NAME}/impl/conditional_removal.hpp
+      # ...
+      include/pcl/${SUBSYS_NAME}/impl/bilateral.hpp
+    )
+    ```
+  </Step>
+
+  <Step title="Write a test">
+    Add a GTest file under `test/` that exercises the class with at least one built-in point type. Verify output size, that field values are within expected bounds, and that the class handles edge cases (empty cloud, zero `sigma_s`) without crashing.
+
+    ```cpp
+    #include <gtest/gtest.h>
+    #include <pcl/point_types.h>
+    #include <pcl/filters/bilateral.h>
+
+    TEST(BilateralFilter, RejectsZeroHalfSize)
+    {
+      pcl::PointCloud<pcl::PointXYZI>::Ptr cloud (
+        new pcl::PointCloud<pcl::PointXYZI>);
+      cloud->push_back ({0, 0, 0, 1.0f});
+
+      pcl::BilateralFilter<pcl::PointXYZI> bf;
+      bf.setInputCloud (cloud);
+      // sigma_s_ == 0 by default; filter() should return without crashing
+      pcl::PointCloud<pcl::PointXYZI> output;
+      bf.filter (output);
+      EXPECT_EQ (output.size (), 0u);
+    }
+
+    int main (int argc, char **argv)
+    {
+      testing::InitGoogleTest (&argc, argv);
+      return RUN_ALL_TESTS ();
+    }
+    ```
+  </Step>
+</Steps>
+
+## Input cloud and indices handling
+
+`pcl::PCLBase<PointT>` provides two ways to select which points an algorithm processes:
+
+- **`setInputCloud(cloud)`** — set the source cloud. The pointer is stored as `input_`.
+- **`setIndices(indices)`** — restrict processing to a subset. The pointer is stored as `indices_`. If you never call `setIndices`, PCLBase creates a fake index list covering the entire cloud automatically.
+
+Always iterate over `indices_` rather than the cloud directly. This makes your class work transparently with organized clouds, ROI workflows, and any other code that passes a pre-filtered index list.
+
+```cpp
+for (std::size_t i = 0; i < indices_->size (); ++i)
+{
+  // use (*indices_)[i] as the point index into *input_
+}
+```
+
+## Doxygen comment requirements
+
+Every public class and method needs a Doxygen comment. Use the `\brief`, `\param[in]`, `\param[out]`, and `\return` tags:
+
+```cpp
+/** \brief Set the spatial half-size of the bilateral filter window.
+  * \param[in] sigma_s half-size in the same units as the point coordinates
+  */
+void setHalfSize (double sigma_s);
+```
+
+Private helpers need at least a `\brief` line. Member variables need a trailing `///<` comment.
+
+## Naming conventions
+
+| Element | Convention | Example |
+|---------|-----------|---------|
+| Classes | `UpperCamelCase` | `BilateralFilter` |
+| Methods | `lowerCamelCase` | `applyFilter`, `setHalfSize` |
+| Member variables | `snake_case_` with trailing underscore | `sigma_s_`, `tree_` |
+| Indentation | 2 spaces | — |
+| Braces | Same line for control flow, own line for class/function bodies | — |
+
+<Tip>
+Choose method names that describe what the parameter means, not its internal variable name. Prefer `setHalfSize` over `setSigmaS`.
+</Tip>

@@ -1,0 +1,195 @@
+---
+title: "Contributing"
+description: "Report bugs, open pull requests, and write code that meets PCL's style and testing standards."
+keywords: ["contributing", "pull request", "bug report", "coding style", "GTest", "Azure Pipelines"]
+---
+
+PCL is an open-source project maintained by volunteers. Contributions of all sizes—bug fixes, new algorithms, documentation improvements—are welcome. This page explains how to report issues, submit code, and meet the project's quality bar.
+
+## Ways to contribute
+
+<CardGroup cols={2}>
+  <Card title="Report a bug" icon="bug" href="#reporting-bugs">
+    Open a GitHub issue with a reproducible test case.
+  </Card>
+  <Card title="Submit a pull request" icon="code-pull-request" href="#pull-requests">
+    Fix a bug, add a feature, or improve documentation.
+  </Card>
+  <Card title="Answer questions" icon="comments" href="https://stackoverflow.com/questions/tagged/point-cloud-library">
+    Help others on Stack Overflow using the `point-cloud-library` tag.
+  </Card>
+  <Card title="Join the community" icon="discord" href="https://discord.gg/JFFMAXS">
+    Chat with maintainers and other contributors on Discord.
+  </Card>
+</CardGroup>
+
+<Note>
+Do not use the GitHub issue tracker for personal support questions. Use Stack Overflow or Discord instead.
+</Note>
+
+## Reporting bugs
+
+A good bug report lets maintainers reproduce and fix the problem without needing to follow up for more information. Before filing an issue:
+
+1. Search the [issue tracker](https://github.com/PointCloudLibrary/pcl/issues) to confirm the bug hasn't already been reported.
+2. Try to reproduce the issue on the latest `master` branch.
+3. Isolate the problem to the smallest possible code snippet.
+
+Your report should include:
+
+- **Environment** — OS, compiler, PCL version, and relevant hardware.
+- **Steps to reproduce** — exact commands or code that trigger the bug.
+- **Expected behavior** — what you expected to happen.
+- **Actual behavior** — what actually happened, including any error output.
+
+## Pull requests
+
+<Steps>
+  <Step title="Ask before starting large work">
+    Before implementing a new feature or a significant refactor, open an issue to discuss it with the maintainers. This avoids spending time on work that may not be merged.
+
+    For a brand-new algorithm, read the [writing a new PCL class](/guides/writing-classes) guide first.
+  </Step>
+
+  <Step title="Fork and branch">
+    Fork the repository on GitHub, then create a focused branch for your change:
+
+    ```bash
+    git checkout -b fix/passthrough-empty-cloud
+    ```
+
+    Keep the branch focused on a single logical change. Avoid mixing unrelated fixes or style changes.
+  </Step>
+
+  <Step title="Write code that follows the style guide">
+    PCL follows a consistent coding style. Key rules:
+
+    | Element | Convention |
+    |---------|-----------|
+    | Classes and types | `UpperCamelCase` |
+    | Methods and variables | `snake_case` |
+    | Member variables | `snake_case_` with trailing underscore |
+    | Indentation | 2 spaces (no tabs) |
+    | Braces | Same line for control flow |
+    | Namespaces | `pcl::` for all public API |
+
+    ```cpp
+    namespace pcl
+    {
+      template <typename PointT>
+      class MyFilter : public Filter<PointT>
+      {
+        public:
+          void applyFilter (PointCloud &output);
+
+        private:
+          double search_radius_;
+      };
+    }
+    ```
+
+    Do not fix style issues in lines unrelated to your contribution. Mixed concerns make reviews harder.
+  </Step>
+
+  <Step title="Add a license header to new files">
+    Every new `.h` and `.cpp` file must include the BSD-3-Clause license header:
+
+    ```cpp
+    /*
+     * SPDX-License-Identifier: BSD-3-Clause
+     *
+     *  Point Cloud Library (PCL) - www.pointclouds.org
+     *  Copyright (c) 2014-, Open Perception Inc.
+     *
+     *  All rights reserved
+     */
+    ```
+
+    If your institution requires an additional copyright line, add it below the standard header.
+  </Step>
+
+  <Step title="Write tests">
+    PCL uses [GTest](https://github.com/google/googletest) for unit tests. Place test files in the `test/` directory of the relevant module.
+
+    ```cpp
+    #include <gtest/gtest.h>
+    #include <pcl/filters/passthrough.h>
+    #include <pcl/point_types.h>
+
+    TEST(PassThrough, FiltersOnX)
+    {
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (
+        new pcl::PointCloud<pcl::PointXYZ>);
+      cloud->push_back ({1.0f, 0, 0});
+      cloud->push_back ({5.0f, 0, 0});
+
+      pcl::PassThrough<pcl::PointXYZ> pass;
+      pass.setInputCloud (cloud);
+      pass.setFilterFieldName ("x");
+      pass.setFilterLimits (0.0f, 2.0f);
+
+      pcl::PointCloud<pcl::PointXYZ> result;
+      pass.filter (result);
+
+      ASSERT_EQ (result.size (), 1u);
+      EXPECT_FLOAT_EQ (result[0].x, 1.0f);
+    }
+
+    int main (int argc, char **argv)
+    {
+      testing::InitGoogleTest (&argc, argv);
+      return RUN_ALL_TESTS ();
+    }
+    ```
+
+    Run the tests locally before pushing:
+
+    ```bash
+    cd build
+    cmake --build . --target test_filters
+    ./bin/test_filters
+    ```
+  </Step>
+
+  <Step title="Tidy your commit history">
+    Squash work-in-progress commits into logical units before opening the pull request. Each commit should pass the tests on its own. Avoid merge commits—rebase onto `master` instead:
+
+    ```bash
+    git fetch upstream
+    git rebase upstream/master
+    ```
+  </Step>
+
+  <Step title="Open the pull request">
+    Push your branch and open a pull request against `master`. Fill in the PR template with a description of the change, the motivation, and any relevant issue numbers.
+
+    Use the checklist to confirm your contribution is ready:
+
+    - [ ] Code follows the [PCL Style Guide](https://pcl.readthedocs.io/projects/advanced/en/latest/pcl_style_guide.html)
+    - [ ] Commit history is tidy (no merge commits, squashed into logical units)
+    - [ ] New files include the BSD-3-Clause license header
+    - [ ] Tests are included and pass locally
+  </Step>
+</Steps>
+
+## Continuous integration
+
+PCL uses **Azure Pipelines** to run CI on every pull request. Builds run on Ubuntu, Windows, and macOS to catch platform-specific regressions.
+
+<Tabs>
+  <Tab title="Ubuntu">
+    The Linux build compiles with GCC and Clang, runs the full test suite, and checks for memory issues with ASan on selected configurations.
+  </Tab>
+  <Tab title="Windows">
+    The Windows build uses MSVC and verifies that the library compiles and links correctly on the platform most users install from binary releases.
+  </Tab>
+  <Tab title="macOS">
+    The macOS build uses Apple Clang and validates headers and core algorithms. Some modules are disabled on macOS due to platform limitations.
+  </Tab>
+</Tabs>
+
+All CI checks must pass before a pull request can be merged. If a check fails on code you did not change, mention it in the PR comment so a maintainer can investigate.
+
+## License
+
+PCL is [BSD-3-Clause licensed](https://github.com/PointCloudLibrary/pcl/blob/master/LICENSE.txt). By submitting a pull request, you agree to license your contribution under the same terms. Open Perception, Inc. holds the project copyright, but you may add an additional copyright line if your institution requires it.

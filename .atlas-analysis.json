@@ -1,0 +1,111 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Point Cloud Library",
+  "projectDescription": "A large-scale, open-source C++ library for 2D/3D point cloud processing, offering modules for filtering, feature estimation, segmentation, registration, surface reconstruction, and visualization.",
+  "theme": "aspen",
+  "primaryColor": "#95be66",
+  "lightColor": "#545450",
+  "darkColor": "#6b6b69",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "getting-started/installation",
+              "getting-started/quickstart",
+              "getting-started/pcd-format"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/point-types",
+              "concepts/data-structures",
+              "concepts/architecture"
+            ]
+          },
+          {
+            "group": "Developer Guides",
+            "pages": [
+              "guides/cmake-integration",
+              "guides/custom-point-types",
+              "guides/writing-classes",
+              "guides/gpu-cuda",
+              "contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Module Reference",
+        "groups": [
+          {
+            "group": "Processing",
+            "pages": [
+              "modules/filters",
+              "modules/features",
+              "modules/keypoints",
+              "modules/segmentation",
+              "modules/registration"
+            ]
+          },
+          {
+            "group": "Reconstruction & Output",
+            "pages": [
+              "modules/surface",
+              "modules/io",
+              "modules/visualization"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Point cloud filtering (VoxelGrid, PassThrough, Statistical Outlier Removal, radius-based filtering)",
+    "3D feature descriptors (FPFH, VFH, SHOT, NARF, PFH, spin images)",
+    "Point cloud registration (ICP, NDT, GICP, RANSAC-based initial alignment)",
+    "Segmentation algorithms (Euclidean clustering, region growing, SAC, supervoxels)",
+    "Surface reconstruction (Greedy Projection, Poisson, MLS resampling, Marching Cubes)",
+    "I/O support for PCD, PLY, OBJ, PNG, and sensor grabbers (OpenNI, RealSense, Kinect, LiDAR)",
+    "KdTree and Octree spatial data structures for efficient neighbor search",
+    "3D visualization via PCLVisualizer (VTK-based) and CloudViewer",
+    "GPU/CUDA acceleration for select algorithms",
+    "Support for custom PointT types via template metaprogramming"
+  ],
+  "publicApiSurface": [
+    "pcl::PointCloud<PointT>",
+    "pcl::PointXYZ, PointXYZRGB, PointXYZRGBA, PointNormal, PointXYZI, FPFHSignature33",
+    "pcl::VoxelGrid<PointT>",
+    "pcl::PassThrough<PointT>",
+    "pcl::StatisticalOutlierRemoval<PointT>",
+    "pcl::RadiusOutlierRemoval<PointT>",
+    "pcl::NormalEstimation<PointT, NormalT>",
+    "pcl::FPFHEstimation<PointT, NormalT, FeatureT>",
+    "pcl::VFHEstimation<PointT, NormalT, FeatureT>",
+    "pcl::SHOTEstimation<PointT, NormalT, FeatureT>",
+    "pcl::EuclideanClusterExtraction<PointT>",
+    "pcl::SACSegmentation<PointT>",
+    "pcl::RegionGrowing<PointT, NormalT>",
+    "pcl::SupervoxelClustering<PointT>",
+    "pcl::IterativeClosestPoint<SourceT, TargetT>",
+    "pcl::NormalDistributionsTransform<PointSource, PointTarget>",
+    "pcl::GeneralizedIterativeClosestPoint<PointSource, TargetT>",
+    "pcl::SampleConsensusPrerejective<SourceT, TargetT, FeatureT>",
+    "pcl::GreedyProjectionTriangulation<PointNT>",
+    "pcl::Poisson<PointNT>",
+    "pcl::MovingLeastSquares<PointInT, PointOutT>",
+    "pcl::PCDWriter / pcl::PCDReader",
+    "pcl::PLYWriter / pcl::PLYReader",
+    "pcl::PCLVisualizer",
+    "pcl::CloudViewer",
+    "pcl::KdTreeFLANN<PointT>",
+    "pcl::octree::OctreePointCloudSearch<PointT>",
+    "pcl::io::OpenNI2Grabber",
+    "pcl::io::RealSense2Grabber"
+  ]
+}

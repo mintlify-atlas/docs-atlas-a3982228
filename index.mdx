@@ -1,97 +1,114 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Point Cloud Library"
+description: "A large-scale, open-source C++ library for 2D/3D image and point cloud processing."
 ---
 
-## Setting up
+Point Cloud Library (PCL) is a standalone, large-scale open project for 2D/3D image and point cloud processing. PCL contains state-of-the-art algorithms for filtering, feature estimation, surface reconstruction, registration, model fitting, segmentation, and visualization — all implemented in C++17.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Install PCL on Linux, macOS, or Windows using your preferred package manager or from source.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
+    Write your first PCL program, load a point cloud, and run a filter in minutes.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Core Concepts" icon="cube" href="/concepts/point-types">
+    Learn about PointT types, PointCloud containers, and the building blocks of PCL.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Module Reference" icon="book" href="/modules/filters">
+    Explore the full API surface: filters, features, segmentation, registration, and more.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What you can do with PCL
 
-Everything you need to create world-class documentation.
+<CardGroup cols={3}>
+  <Card title="Filter & Downsample" icon="filter" href="/modules/filters">
+    Remove noise, downsample with VoxelGrid, and crop point clouds to regions of interest.
+  </Card>
+  <Card title="Estimate Features" icon="shapes" href="/modules/features">
+    Compute surface normals, FPFH, VFH, SHOT, and other descriptors for recognition tasks.
+  </Card>
+  <Card title="Segment Scenes" icon="scissors" href="/modules/segmentation">
+    Cluster objects, extract planes, and segment scenes with Euclidean clustering and RANSAC.
+  </Card>
+  <Card title="Register Clouds" icon="arrows-rotate" href="/modules/registration">
+    Align point clouds with ICP, NDT, GICP, and feature-based initial alignment.
+  </Card>
+  <Card title="Reconstruct Surfaces" icon="mountain" href="/modules/surface">
+    Generate meshes with Greedy Projection, Poisson reconstruction, or MLS resampling.
+  </Card>
+  <Card title="Visualize Results" icon="eye" href="/modules/visualization">
+    Render point clouds and meshes interactively with PCLVisualizer or CloudViewer.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Get started in four steps
 
-## Need inspiration?
+<Steps>
+  <Step title="Install PCL">
+    Install via your system package manager or build from source. PCL is available on Ubuntu, macOS (Homebrew), and Windows (vcpkg).
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+    ```bash
+    # Ubuntu
+    sudo apt install libpcl-dev
+
+    # macOS
+    brew install pcl
+    ```
+  </Step>
+  <Step title="Set up your CMake project">
+    Add PCL as a dependency in your `CMakeLists.txt` and link against the modules you need.
+
+    ```cmake CMakeLists.txt
+    find_package(PCL REQUIRED COMPONENTS common io filters)
+    target_link_libraries(my_app ${PCL_LIBRARIES})
+    ```
+  </Step>
+  <Step title="Load and process a point cloud">
+    Use `pcl::PCDReader` to load a `.pcd` file and apply a filter in just a few lines.
+
+    ```cpp main.cpp
+    #include <pcl/io/pcd_io.h>
+    #include <pcl/point_types.h>
+    #include <pcl/filters/voxel_grid.h>
+
+    int main() {
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+      pcl::io::loadPCDFile("input.pcd", *cloud);
+
+      pcl::VoxelGrid<pcl::PointXYZ> vg;
+      vg.setInputCloud(cloud);
+      vg.setLeafSize(0.01f, 0.01f, 0.01f);
+
+      pcl::PointCloud<pcl::PointXYZ>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZ>);
+      vg.filter(*filtered);
+      return 0;
+    }
+    ```
+  </Step>
+  <Step title="Explore the modules">
+    PCL is organized into focused modules. Browse the [Module Reference](/modules/filters) to discover algorithms for your use case.
+  </Step>
+</Steps>
+
+## Developer resources
+
+<CardGroup cols={2}>
+  <Card title="PCD file format" icon="file-code" href="/getting-started/pcd-format">
+    Understand the ASCII and binary PCD format used throughout PCL.
+  </Card>
+  <Card title="CMake integration" icon="gear" href="/guides/cmake-integration">
+    Detailed guide on linking PCL into your own CMake-based project.
+  </Card>
+  <Card title="Custom point types" icon="plus" href="/guides/custom-point-types">
+    Define and register your own PointT structures for domain-specific workflows.
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/contributing">
+    Coding conventions, PR process, and how to add new algorithms to PCL.
+  </Card>
+</CardGroup>
+
+<Note>
+  PCL is released under the BSD license and is free for commercial and research use. Cite PCL in your publications using the BibTeX entry in the [README](https://github.com/PointCloudLibrary/pcl/blob/master/README.md).
+</Note>

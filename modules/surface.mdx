@@ -1,0 +1,221 @@
+---
+title: "Surface reconstruction"
+description: "Convert point clouds into smooth surfaces and meshes using PCL's surface module."
+---
+
+The `pcl_surface` module provides algorithms for reconstructing surfaces and meshes from unorganized point clouds. The typical pipeline involves smoothing/upsampling first (MLS), then meshing (GP3 or Poisson).
+
+<CardGroup cols={3}>
+  <Card title="MLS resampling" icon="wave-sine" href="#moving-least-squares-mls">
+    Smooth and upsample noisy point clouds before meshing.
+  </Card>
+  <Card title="Greedy Projection" icon="triangle" href="#greedy-projection-triangulation">
+    Fast triangulation for open surfaces with consistent normals.
+  </Card>
+  <Card title="Poisson" icon="droplet" href="#poisson-surface-reconstruction">
+    Watertight mesh reconstruction for closed objects.
+  </Card>
+</CardGroup>
+
+## Moving Least Squares (MLS)
+
+`pcl::MovingLeastSquares` smooths and optionally upsamples a point cloud by fitting a polynomial surface locally around each point. It can also compute normals, making it a useful preprocessing step before meshing.
+
+**Header:** `#include <pcl/surface/mls.h>`
+
+**Key methods:**
+
+| Method | Description |
+|--------|-------------|
+| `setInputCloud(cloud)` | Input point cloud |
+| `setSearchRadius(r)` | Radius for local polynomial fitting |
+| `setPolynomialOrder(n)` | Polynomial order (2 is typical) |
+| `setComputeNormals(true)` | Estimate normals during processing |
+| `setUpsamplingMethod(method)` | `NONE`, `SAMPLE_LOCAL_PLANE`, `RANDOM_UNIFORM_DENSITY`, `VOXEL_GRID_DILATION` |
+| `process(output)` | Run the algorithm |
+
+```cpp mls_example.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/surface/mls.h>
+#include <pcl/search/kdtree.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::io::loadPCDFile("input.pcd", *cloud);
+
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+
+  pcl::PointCloud<pcl::PointNormal> mls_points;
+  pcl::MovingLeastSquares<pcl::PointXYZ, pcl::PointNormal> mls;
+  mls.setComputeNormals(true);
+  mls.setInputCloud(cloud);
+  mls.setPolynomialOrder(2);
+  mls.setSearchMethod(tree);
+  mls.setSearchRadius(0.03);
+  mls.process(mls_points);
+
+  pcl::io::savePCDFile("smoothed.pcd", mls_points);
+  return 0;
+}
+```
+
+## Greedy Projection Triangulation
+
+`pcl::GreedyProjectionTriangulation` incrementally triangulates a point cloud with normals by projecting points locally and connecting them into triangles. It is fast and works well for open surfaces.
+
+**Header:** `#include <pcl/surface/gp3.h>`
+
+**Key methods:**
+
+| Method | Description |
+|--------|-------------|
+| `setSearchRadius(r)` | Maximum edge length for triangles |
+| `setMu(mu)` | Multiplier for nearest-neighbor distance (typically 2.5) |
+| `setMaximumNearestNeighbors(n)` | Max neighbors considered per point |
+| `setMaximumSurfaceAngle(angle)` | Max angle between normals (radians) |
+| `setMinimumAngle(angle)` | Minimum interior angle of triangles |
+| `setMaximumAngle(angle)` | Maximum interior angle of triangles |
+| `setNormalConsistency(true)` | Enforce consistent normal orientation |
+| `reconstruct(mesh)` | Output `pcl::PolygonMesh` |
+
+```cpp gp3_example.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/surface/gp3.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/io/vtk_io.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointNormal>::Ptr cloud(new pcl::PointCloud<pcl::PointNormal>);
+  pcl::io::loadPCDFile("smoothed.pcd", *cloud);
+
+  pcl::search::KdTree<pcl::PointNormal>::Ptr tree(new pcl::search::KdTree<pcl::PointNormal>);
+  tree->setInputCloud(cloud);
+
+  pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
+  pcl::PolygonMesh triangles;
+
+  gp3.setSearchRadius(0.025);
+  gp3.setMu(2.5);
+  gp3.setMaximumNearestNeighbors(100);
+  gp3.setMaximumSurfaceAngle(M_PI / 4); // 45 degrees
+  gp3.setMinimumAngle(M_PI / 18);       // 10 degrees
+  gp3.setMaximumAngle(2 * M_PI / 3);    // 120 degrees
+  gp3.setNormalConsistency(false);
+  gp3.setInputCloud(cloud);
+  gp3.setSearchMethod(tree);
+  gp3.reconstruct(triangles);
+
+  pcl::io::saveVTKFile("mesh.vtk", triangles);
+  return 0;
+}
+```
+
+<Tip>
+  Run MLS first to smooth the cloud and compute consistent normals before calling `GreedyProjectionTriangulation`. Inconsistent normals produce holes and artifacts.
+</Tip>
+
+## Poisson surface reconstruction
+
+`pcl::Poisson` solves an implicit Poisson equation to produce a watertight mesh. It requires oriented normals and works best for closed objects (e.g., scanned objects without missing data).
+
+**Header:** `#include <pcl/surface/poisson.h>`
+
+**Key methods:**
+
+| Method | Description |
+|--------|-------------|
+| `setDepth(d)` | Octree depth controlling mesh resolution (8–12 typical) |
+| `setScale(s)` | Ratio of the reconstructed volume to the bounding cube |
+| `setSamplesPerNode(n)` | Minimum samples per octree node (controls smoothing) |
+| `setIsoDivide(d)` | Depth at which block iso-surface extraction is performed |
+| `reconstruct(mesh)` | Output `pcl::PolygonMesh` |
+
+```cpp poisson_example.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/surface/poisson.h>
+#include <pcl/io/vtk_io.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointNormal>::Ptr cloud(new pcl::PointCloud<pcl::PointNormal>);
+  pcl::io::loadPCDFile("normals.pcd", *cloud);
+
+  pcl::Poisson<pcl::PointNormal> poisson;
+  poisson.setDepth(9);
+  poisson.setInputCloud(cloud);
+
+  pcl::PolygonMesh mesh;
+  poisson.reconstruct(mesh);
+
+  pcl::io::saveVTKFile("poisson_mesh.vtk", mesh);
+  return 0;
+}
+```
+
+<Note>
+  Poisson reconstruction always produces a closed (watertight) mesh. If your input has missing data, the algorithm will fill holes, which may not be desired. Use GP3 for open surfaces.
+</Note>
+
+## Marching Cubes
+
+PCL provides two Marching Cubes implementations for implicit surface extraction:
+
+- `pcl::MarchingCubesHoppe` — uses the Hoppe signed distance function
+- `pcl::MarchingCubesRBF` — uses Radial Basis Functions for the implicit surface
+
+**Header:** `#include <pcl/surface/marching_cubes_hoppe.h>`
+
+```cpp marching_cubes_example.cpp
+#include <pcl/surface/marching_cubes_hoppe.h>
+#include <pcl/io/vtk_io.h>
+
+pcl::MarchingCubesHoppe<pcl::PointNormal> mc;
+mc.setInputCloud(cloud);
+mc.setGridResolution(50, 50, 50);
+mc.setIsoLevel(0.0f);
+
+pcl::PolygonMesh mesh;
+mc.reconstruct(mesh);
+pcl::io::saveVTKFile("marching_cubes.vtk", mesh);
+```
+
+## Convex and concave hull
+
+For 2D or 3D convex/concave hull computation:
+
+```cpp hull_example.cpp
+#include <pcl/surface/convex_hull.h>
+#include <pcl/surface/concave_hull.h>
+
+// Convex hull
+pcl::ConvexHull<pcl::PointXYZ> chull;
+chull.setInputCloud(cloud);
+pcl::PolygonMesh convex_mesh;
+chull.reconstruct(convex_mesh);
+
+// Concave hull (alpha shape)
+pcl::ConcaveHull<pcl::PointXYZ> concave;
+concave.setInputCloud(cloud);
+concave.setAlpha(0.1);
+pcl::PolygonMesh concave_mesh;
+concave.reconstruct(concave_mesh);
+```
+
+## Choosing a reconstruction method
+
+| Method | Surface type | Normals required | Speed | Best for |
+|--------|-------------|-----------------|-------|----------|
+| GP3 | Open | Yes | Fast | Scanned open surfaces |
+| Poisson | Watertight (closed) | Yes (oriented) | Medium | Closed objects, scanning |
+| Marching Cubes | Implicit iso-surface | Yes | Slow | SDF-based reconstruction |
+| ConvexHull | Convex boundary | No | Very fast | Bounding volume, collision |
+| ConcaveHull | Non-convex boundary | No | Fast | 2D footprint, region boundary |
+
+<Tip>
+  The typical pipeline for a scanned object: `StatisticalOutlierRemoval` → `MovingLeastSquares` (with normals) → `GreedyProjectionTriangulation` or `Poisson`.
+</Tip>

@@ -1,122 +1,85 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Point Cloud Library",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#95be66",
+    "light": "#545450",
+    "dark": "#6b6b69"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/99b076c6-f562-4fc6-aae2-c79a7ea6b85b.jpg",
+  "logo": {
+    "light": "https://media.brand.dev/c8f9c481-af8f-4f46-a091-495d00ef8ee5.png",
+    "dark": "https://media.brand.dev/c8f9c481-af8f-4f46-a091-495d00ef8ee5.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/PointCloudLibrary/pcl"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/PointCloudLibrary/pcl"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "getting-started/installation",
+              "getting-started/quickstart",
+              "getting-started/pcd-format"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/point-types",
+              "concepts/data-structures",
+              "concepts/architecture"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Developer Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/cmake-integration",
+              "guides/custom-point-types",
+              "guides/writing-classes",
+              "guides/gpu-cuda",
+              "contributing"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Module Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Processing",
             "pages": [
-              "api-reference/introduction"
+              "modules/filters",
+              "modules/features",
+              "modules/keypoints",
+              "modules/segmentation",
+              "modules/registration"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Reconstruction & Output",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "modules/surface",
+              "modules/io",
+              "modules/visualization"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,426 @@
+---
+title: "Segmentation"
+description: "Partition point clouds into meaningful regions using Euclidean clustering, RANSAC model fitting, region growing, and supervoxel methods."
+keywords: ["pcl", "segmentation", "euclidean cluster", "RANSAC", "SACSegmentation", "region growing", "supervoxels", "min-cut"]
+---
+
+## Overview
+
+Segmentation algorithms split a point cloud into subsets that share a common property — spatial proximity, surface smoothness, colour similarity, or conformance to a geometric model (plane, sphere, cylinder).
+
+<CardGroup cols={3}>
+  <Card title="Euclidean clustering" icon="circles-three">
+    Groups spatially close points. No model required.
+  </Card>
+  <Card title="Model fitting" icon="shapes">
+    Fits parametric shapes (planes, spheres, cylinders) with RANSAC.
+  </Card>
+  <Card title="Region growing" icon="tree-structure">
+    Expands segments based on normal or colour continuity.
+  </Card>
+</CardGroup>
+
+All class-based segmenters follow this pattern:
+
+```cpp
+segmenter.setInputCloud(cloud);
+// set parameters …
+segmenter.extract(cluster_indices); // or segment(inliers, coefficients)
+```
+
+---
+
+## Euclidean cluster extraction
+
+`pcl::EuclideanClusterExtraction<PointT>` implements a flood-fill clustering in 3D space: any two points closer than `cluster_tolerance` belong to the same cluster. It uses a KdTree for efficient neighbour queries.
+
+**Header:** `<pcl/segmentation/extract_clusters.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setClusterTolerance` | `void setClusterTolerance(double tolerance)` | Maximum distance between two points in the same cluster (metres). |
+| `setMinClusterSize` | `void setMinClusterSize(int min_pts)` | Clusters with fewer points are discarded. |
+| `setMaxClusterSize` | `void setMaxClusterSize(int max_pts)` | Clusters with more points are discarded. |
+| `setSearchMethod` | `void setSearchMethod(const KdTreePtr &)` | Spatial index (typically `pcl::search::KdTree`). |
+| `setInputCloud` | inherited | Input cloud pointer. |
+| `extract` | `void extract(std::vector<PointIndices> &clusters)` | Write one `PointIndices` per cluster into `clusters`. |
+
+### Code example
+
+<Steps>
+  <Step title="Load and downsample the scene">
+    Read the point cloud, remove the dominant plane, and downsample with VoxelGrid to reduce processing time.
+  </Step>
+  <Step title="Build KdTree and run extraction">
+    Construct the spatial index on the remaining points, set cluster parameters, and call `extract()`.
+  </Step>
+  <Step title="Iterate over clusters">
+    For each `PointIndices` entry, copy the corresponding points into a new cloud.
+  </Step>
+</Steps>
+
+```cpp cluster_extraction.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/segmentation/extract_clusters.h>
+#include <pcl/search/kdtree.h>
+#include <iostream>
+
+int main()
+{
+  // --- Load cloud ---
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("table_scene_lms400.pcd", *cloud);
+  std::cout << "Loaded: " << cloud->size() << " points\n";
+
+  // --- Downsample with VoxelGrid ---
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_f(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::VoxelGrid<pcl::PointXYZ> vg;
+  vg.setInputCloud(cloud);
+  vg.setLeafSize(0.01f, 0.01f, 0.01f);
+  vg.filter(*cloud_f);
+
+  // --- Remove planar surface iteratively ---
+  pcl::SACSegmentation<pcl::PointXYZ> seg;
+  seg.setOptimizeCoefficients(true);
+  seg.setModelType(pcl::SACMODEL_PLANE);
+  seg.setMethodType(pcl::SAC_RANSAC);
+  seg.setMaxIterations(100);
+  seg.setDistanceThreshold(0.02);
+
+  pcl::ExtractIndices<pcl::PointXYZ> extract;
+  int nr_points = static_cast<int>(cloud_f->size());
+
+  while (cloud_f->size() > 0.3 * nr_points)
+  {
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    seg.setInputCloud(cloud_f);
+    seg.segment(*inliers, *coefficients);
+    if (inliers->indices.empty()) break;
+
+    extract.setInputCloud(cloud_f);
+    extract.setIndices(inliers);
+    extract.setNegative(true);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_tmp(new pcl::PointCloud<pcl::PointXYZ>);
+    extract.filter(*cloud_tmp);
+    cloud_f.swap(cloud_tmp);
+  }
+  std::cout << "After plane removal: " << cloud_f->size() << " points\n";
+
+  // --- Euclidean cluster extraction ---
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  tree->setInputCloud(cloud_f);
+
+  std::vector<pcl::PointIndices> cluster_indices;
+  pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+  ec.setClusterTolerance(0.02);  // 2 cm
+  ec.setMinClusterSize(100);
+  ec.setMaxClusterSize(25000);
+  ec.setSearchMethod(tree);
+  ec.setInputCloud(cloud_f);
+  ec.extract(cluster_indices);
+
+  // --- Save each cluster ---
+  int cluster_id = 0;
+  pcl::PCDWriter writer;
+  for (const auto &indices : cluster_indices)
+  {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cluster(new pcl::PointCloud<pcl::PointXYZ>);
+    for (const auto idx : indices.indices)
+      cluster->push_back((*cloud_f)[idx]);
+    cluster->width = cluster->size();
+    cluster->height = 1;
+    cluster->is_dense = true;
+
+    std::string fname = "cloud_cluster_" + std::to_string(cluster_id++) + ".pcd";
+    writer.write(fname, *cluster);
+    std::cout << "Cluster " << cluster_id << ": " << cluster->size() << " points\n";
+  }
+  return 0;
+}
+```
+
+<Warning>
+  Setting `cluster_tolerance` too small can split a single object into multiple fragments. Too large, and distinct objects merge. Start at 1–2 cm for tabletop scenes and adjust based on point density.
+</Warning>
+
+---
+
+## SAC segmentation
+
+`pcl::SACSegmentation<PointT>` fits a parametric geometric model to a point cloud using a sample consensus method (typically RANSAC). It returns the inlier indices and model coefficients.
+
+**Header:** `<pcl/segmentation/sac_segmentation.h>`
+
+### Supported model types (selected)
+
+| Constant | Model | Coefficients |
+|----------|-------|-------------|
+| `SACMODEL_PLANE` | Infinite plane | `[a, b, c, d]` (ax+by+cz+d=0) |
+| `SACMODEL_SPHERE` | Sphere | `[cx, cy, cz, r]` |
+| `SACMODEL_CYLINDER` | Cylinder | `[point_on_axis (3), axis_dir (3), r]` |
+| `SACMODEL_LINE` | Line | `[point_on_line (3), line_dir (3)]` |
+| `SACMODEL_CIRCLE3D` | Circle in 3D | `[cx, cy, cz, r, nx, ny, nz]` |
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setModelType` | `void setModelType(int model)` | Geometric model (see table above). |
+| `setMethodType` | `void setMethodType(int method)` | Consensus method: `SAC_RANSAC`, `SAC_LMEDS`, `SAC_MSAC`, etc. |
+| `setDistanceThreshold` | `void setDistanceThreshold(double threshold)` | Maximum point-to-model distance to count as an inlier. |
+| `setMaxIterations` | `void setMaxIterations(int max_iter)` | RANSAC iteration budget. |
+| `setProbability` | `void setProbability(double prob)` | Target probability that at least one sample is outlier-free. |
+| `setOptimizeCoefficients` | `void setOptimizeCoefficients(bool)` | Refine model using all inliers after RANSAC. |
+| `setAxis` | `void setAxis(const Eigen::Vector3f &axis)` | Constrain model axis (useful for `SACMODEL_CYLINDER`). |
+| `setEpsAngle` | `void setEpsAngle(double ea)` | Angular tolerance for axis constraint (radians). |
+| `segment` | `void segment(PointIndices &inliers, ModelCoefficients &coefficients)` | Run segmentation. |
+
+### Code example — plane extraction
+
+```cpp planar_segmentation.cpp
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/ModelCoefficients.h>
+#include <pcl/PointIndices.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <iostream>
+
+int main()
+{
+  // Build a synthetic cloud: most points on z=1 plane, three outliers
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  cloud->width = 15;
+  cloud->height = 1;
+  cloud->resize(15);
+  for (auto &p : *cloud) { p.x = 1024 * rand() / (RAND_MAX + 1.0f); p.y = 1024 * rand() / (RAND_MAX + 1.0f); p.z = 1.0f; }
+  (*cloud)[0].z = 2.0f;  // outlier
+  (*cloud)[3].z = -2.0f; // outlier
+  (*cloud)[6].z = 4.0f;  // outlier
+
+  // Create SAC segmentation object
+  pcl::SACSegmentation<pcl::PointXYZ> seg;
+  seg.setOptimizeCoefficients(true);
+  seg.setModelType(pcl::SACMODEL_PLANE);
+  seg.setMethodType(pcl::SAC_RANSAC);
+  seg.setDistanceThreshold(0.01); // 1 cm inlier threshold
+  seg.setMaxIterations(50);
+
+  seg.setInputCloud(cloud);
+
+  pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+  pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+  seg.segment(*inliers, *coefficients);
+
+  if (inliers->indices.empty())
+  {
+    std::cerr << "No planar model found.\n";
+    return -1;
+  }
+
+  std::cout << "Plane: "
+            << coefficients->values[0] << "x + "
+            << coefficients->values[1] << "y + "
+            << coefficients->values[2] << "z + "
+            << coefficients->values[3] << " = 0\n";
+  std::cout << "Inliers: " << inliers->indices.size() << "\n";
+  return 0;
+}
+```
+
+<Tip>
+  For cylinder detection, pair `SACMODEL_CYLINDER` with `setAxis()` and `setEpsAngle()` to constrain the cylinder to be approximately vertical. Also supply input normals via `setInputNormals()` — the cylinder model requires them.
+</Tip>
+
+---
+
+## Region growing
+
+`pcl::RegionGrowing<PointT, NormalT>` segments a cloud by expanding seed regions to neighbouring points that satisfy smoothness and/or curvature constraints. Unlike Euclidean clustering, it respects surface continuity, stopping at sharp edges.
+
+**Header:** `<pcl/segmentation/region_growing.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setInputNormals` | `void setInputNormals(const NormalPtr &)` | Pre-computed normals (required). |
+| `setSmoothnessThreshold` | `void setSmoothnessThreshold(float theta)` | Maximum angle (radians) between normals of adjacent points. |
+| `setCurvatureThreshold` | `void setCurvatureThreshold(float curvature)` | Maximum curvature for a point to seed a new region. |
+| `setNumberOfNeighbours` | `void setNumberOfNeighbours(unsigned int n)` | KNN count for neighbour search. |
+| `setMinClusterSize` | `void setMinClusterSize(pcl::uindex_t min)` | Discard segments smaller than this. |
+| `setMaxClusterSize` | `void setMaxClusterSize(pcl::uindex_t max)` | Discard segments larger than this. |
+| `setSmoothModeFlag` | `void setSmoothModeFlag(bool)` | `true` = compare with current point normal; `false` = compare with seed normal. |
+| `extract` | `void extract(std::vector<pcl::PointIndices> &clusters)` | Run segmentation. |
+| `getColoredCloud` | `pcl::PointCloud<pcl::PointXYZRGB>::Ptr getColoredCloud()` | Returns a cloud with random per-segment colours for visualisation. |
+
+### Code example
+
+```cpp region_growing.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/segmentation/region_growing.h>
+#include <iostream>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("scene.pcd", *cloud);
+
+  // Estimate normals
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+  ne.setInputCloud(cloud);
+  ne.setSearchMethod(tree);
+  ne.setKSearch(50);
+  ne.compute(*normals);
+
+  // Region growing
+  pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> rg;
+  rg.setMinClusterSize(50);
+  rg.setMaxClusterSize(1000000);
+  rg.setSearchMethod(tree);
+  rg.setNumberOfNeighbours(30);
+  rg.setInputCloud(cloud);
+  rg.setInputNormals(normals);
+  rg.setSmoothnessThreshold(3.0f / 180.0f * float(M_PI)); // 3 degrees
+  rg.setCurvatureThreshold(1.0f);
+
+  std::vector<pcl::PointIndices> clusters;
+  rg.extract(clusters);
+
+  std::cout << "Number of segments: " << clusters.size() << "\n";
+
+  // Optionally visualise
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr coloured = rg.getColoredCloud();
+  pcl::PCDWriter().write("region_growing_coloured.pcd", *coloured);
+  return 0;
+}
+```
+
+---
+
+## Region growing RGB
+
+`pcl::RegionGrowingRGB<PointT>` extends region growing to use colour distance instead of (or in addition to) normal angular deviation. Points are merged when their colour difference falls below `setPointColorThreshold()`. Adjacent segments are merged when their mean colours are within `setRegionColorThreshold()`.
+
+**Header:** `<pcl/segmentation/region_growing_rgb.h>`
+
+```cpp region_growing_rgb.cpp
+#include <pcl/segmentation/region_growing_rgb.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/search/kdtree.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(
+      new pcl::PointCloud<pcl::PointXYZRGB>);
+  pcl::PCDReader().read("coloured_scene.pcd", *cloud);
+
+  pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree(
+      new pcl::search::KdTree<pcl::PointXYZRGB>);
+
+  pcl::RegionGrowingRGB<pcl::PointXYZRGB> rg;
+  rg.setInputCloud(cloud);
+  rg.setSearchMethod(tree);
+  rg.setDistanceThreshold(10.0f);
+  rg.setPointColorThreshold(6.0f);   // max per-channel colour diff for point merge
+  rg.setRegionColorThreshold(5.0f);  // max colour diff for segment merge
+  rg.setMinClusterSize(600);
+
+  std::vector<pcl::PointIndices> clusters;
+  rg.extract(clusters);
+
+  std::cout << "RGB segments found: " << clusters.size() << "\n";
+  return 0;
+}
+```
+
+---
+
+## Min-cut segmentation
+
+`pcl::MinCutSegmentation<PointT>` formulates foreground/background separation as a graph min-cut problem. The user provides one or more seed points representing the foreground object; the algorithm finds the optimal binary partition.
+
+**Header:** `<pcl/segmentation/min_cut_segmentation.h>`
+
+```cpp min_cut.cpp
+#include <pcl/segmentation/min_cut_segmentation.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("object_scene.pcd", *cloud);
+
+  pcl::MinCutSegmentation<pcl::PointXYZ> mc;
+  mc.setInputCloud(cloud);
+
+  // Provide foreground seed points
+  pcl::PointCloud<pcl::PointXYZ>::Ptr foreground_points(
+      new pcl::PointCloud<pcl::PointXYZ>);
+  foreground_points->push_back({68.97f, -18.55f, 0.57f}); // approximate centre of object
+  mc.setForegroundPoints(foreground_points);
+
+  mc.setSigma(0.25);         // controls smoothness weight
+  mc.setRadius(3.0433856);   // object radius estimate
+  mc.setNumberOfNeighbours(14);
+  mc.setSourceWeight(0.8);
+
+  std::vector<pcl::PointIndices> clusters;
+  mc.extract(clusters);
+
+  std::cout << "Foreground points: " << clusters[1].indices.size() << "\n";
+  return 0;
+}
+```
+
+---
+
+## Supervoxel clustering
+
+`pcl::SupervoxelClustering<PointT>` over-segments the cloud into compact, uniform-size regions called supervoxels. Each supervoxel has a representative centroid with averaged colour and normal. Supervoxels are used as a mid-level representation for graph-based segmentation pipelines.
+
+**Header:** `<pcl/segmentation/supervoxel_clustering.h>`
+
+```cpp supervoxels.cpp
+#include <pcl/segmentation/supervoxel_clustering.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <map>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud(
+      new pcl::PointCloud<pcl::PointXYZRGBA>);
+  pcl::PCDReader().read("coloured_scene.pcd", *cloud);
+
+  pcl::SupervoxelClustering<pcl::PointXYZRGBA> super(0.08f, 0.08f);
+  // voxel_resolution, seed_resolution
+  super.setInputCloud(cloud);
+  super.setColorImportance(0.2f);
+  super.setSpatialImportance(0.4f);
+  super.setNormalImportance(1.0f);
+
+  std::map<uint32_t, pcl::Supervoxel<pcl::PointXYZRGBA>::Ptr> supervoxels;
+  super.extract(supervoxels);
+
+  std::cout << "Supervoxels found: " << supervoxels.size() << "\n";
+  return 0;
+}
+```
+
+<Note>
+  Supervoxel adjacency can be obtained via `super.getSupervoxelAdjacency()`, which returns a multimap suitable for building a region adjacency graph (RAG) for higher-level segmentation.
+</Note>

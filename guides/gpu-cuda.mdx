@@ -1,0 +1,168 @@
+---
+title: "GPU and CUDA support"
+description: "Build and use PCL's GPU modules, which accelerate key algorithms using NVIDIA CUDA."
+keywords: ["GPU", "CUDA", "gpu_kinfu", "gpu_people", "BUILD_GPU", "CUDA_ARCH_BIN", "NVIDIA"]
+---
+
+PCL includes a set of GPU modules that offload compute-intensive algorithms to NVIDIA GPUs via CUDA. These modules are separate from the main library and must be explicitly enabled at build time.
+
+<Warning>
+GPU support is only officially supported on Linux. Windows GPU builds are not officially supported.
+</Warning>
+
+## Available GPU modules
+
+<CardGroup cols={2}>
+  <Card title="gpu_kinfu" icon="cube">
+    Real-time 3D reconstruction using the KinectFusion algorithm. Fuses depth frames into a volumetric TSDF representation.
+  </Card>
+  <Card title="gpu_people" icon="person-standing">
+    People detection and body-part labeling from organized point clouds. Runs random decision forests on the GPU.
+  </Card>
+  <Card title="gpu_octree" icon="sitemap">
+    GPU-accelerated octree construction and neighbor search. Used as a building block by other GPU modules.
+  </Card>
+  <Card title="gpu_features" icon="magnifying-glass">
+    GPU implementations of feature descriptors such as FPFH, accelerating the estimation step over large clouds.
+  </Card>
+  <Card title="gpu_segmentation" icon="scissors">
+    Euclidean cluster extraction and other segmentation routines ported to CUDA for throughput-sensitive pipelines.
+  </Card>
+  <Card title="gpu_tracking" icon="crosshairs">
+    Particle-filter-based tracking of objects in successive point cloud frames, optimized for real-time use.
+  </Card>
+</CardGroup>
+
+<Note>
+Most GPU algorithms have a CPU equivalent in the standard PCL modules. The GPU versions trade portability for throughput—prefer the CPU versions when CUDA hardware is unavailable or when latency matters more than throughput.
+</Note>
+
+## Requirements
+
+Before building the GPU modules, confirm that your system meets the following requirements:
+
+| Requirement | Minimum version |
+|-------------|----------------|
+| NVIDIA GPU | Any CUDA-capable GPU |
+| CUDA Toolkit | 9.2 or later |
+| GCC | 7 or later |
+| Clang | 6 or later |
+| Eigen | 3.3.7 or later |
+| Operating system | Linux (Ubuntu 18.04+ recommended) |
+
+Check your installed versions:
+
+```bash
+# CUDA version
+nvcc --version | grep "release" | awk '{print $6}' | cut -c2-
+
+# GCC version
+gcc -dumpversion
+
+# Clang version
+clang --version
+```
+
+<Note>
+Eigen 3.3.7 is required because earlier versions are incompatible with recent CUDA releases. Ubuntu 20.04 and later ship Eigen 3.3.7 by default. On older releases, install it manually.
+</Note>
+
+## Installing prerequisites
+
+<Tabs>
+  <Tab title="Ubuntu 20.04+">
+    The default package versions on Ubuntu 20.04 and later satisfy all requirements. Install the build essentials and CUDA Toolkit from NVIDIA's package repository, then proceed to building PCL.
+
+    ```bash
+    sudo apt update
+    sudo apt install -y build-essential cmake git
+    ```
+  </Tab>
+  <Tab title="Ubuntu 18.04">
+    Ubuntu 18.04 ships GCC 7 and Eigen 3.3.4. You need to upgrade Eigen manually:
+
+    ```bash
+    # Install GCC 7 if not present
+    sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+    sudo apt update && sudo apt install -y g++-7
+    sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 60 \
+      --slave /usr/bin/g++ g++ /usr/bin/g++-7
+    sudo update-alternatives --config gcc
+
+    # Install Eigen 3.3.7
+    wget -qO- https://gitlab.com/libeigen/eigen/-/archive/3.3.7/eigen-3.3.7.tar.gz | tar xz
+    sudo apt install -y libblas-dev
+    cd eigen-3.3.7 && mkdir build && cd build
+    cmake ..
+    sudo make install
+    cd ../.. && rm -rf eigen-3.3.7/
+    ```
+  </Tab>
+</Tabs>
+
+## Building PCL with GPU support
+
+<Steps>
+  <Step title="Create a build directory">
+    ```bash
+    git clone https://github.com/PointCloudLibrary/pcl.git
+    cd pcl
+    mkdir build && cd build
+    ```
+  </Step>
+
+  <Step title="Configure with GPU flags enabled">
+    Pass `-DBUILD_CUDA=ON` and `-DBUILD_GPU=ON` to CMake. Set `CUDA_ARCH_BIN` to match your GPU's compute capability.
+
+    ```bash
+    cmake .. \
+      -DBUILD_CUDA=ON \
+      -DBUILD_GPU=ON \
+      -DCUDA_ARCH_BIN="6.1 7.5 8.6" \
+      -DCMAKE_BUILD_TYPE=Release
+    ```
+
+    To enable specific GPU submodules individually, use their corresponding flags:
+
+    ```cmake
+    -DBUILD_gpu_kinfu=ON
+    -DBUILD_gpu_people=ON
+    -DBUILD_gpu_octree=ON
+    -DBUILD_gpu_features=ON
+    -DBUILD_gpu_segmentation=ON
+    -DBUILD_gpu_tracking=ON
+    ```
+
+    <Tip>
+      Use `ccmake ..` or `cmake-gui ..` for an interactive interface. Press `t` in ccmake to toggle advanced mode, which exposes all GPU subproject flags.
+    </Tip>
+  </Step>
+
+  <Step title="Build and install">
+    ```bash
+    make -j$(nproc)
+    sudo make install
+    ```
+  </Step>
+</Steps>
+
+## `CUDA_ARCH_BIN` values
+
+Set `CUDA_ARCH_BIN` to the compute capability of your GPU. Common values:
+
+| GPU generation | Compute capability |
+|---------------|-------------------|
+| GTX 10xx (Pascal) | `6.1` |
+| RTX 20xx (Turing) | `7.5` |
+| RTX 30xx (Ampere) | `8.6` |
+| RTX 40xx (Ada) | `8.9` |
+
+Separate multiple values with spaces. Building for multiple architectures increases compile time but produces a binary that runs on any of the listed GPUs.
+
+## API stability
+
+<Warning>
+The GPU module APIs are less stable than the core PCL APIs. Interfaces in `gpu_kinfu` and `gpu_people` in particular may change between releases. Check the changelog before upgrading PCL in a production pipeline that depends on GPU modules.
+</Warning>
+
+Most GPU modules expose a C++ API that mirrors the CPU counterpart where one exists. For example, `pcl::gpu::OctreePointCloudSearch` mirrors `pcl::octree::OctreePointCloudSearch`. When porting code from CPU to GPU, start with the CPU version to validate correctness, then substitute the GPU class for throughput.

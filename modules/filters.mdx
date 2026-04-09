@@ -1,0 +1,390 @@
+---
+title: "Filters"
+description: "Downsample, denoise, and extract subsets of point cloud data using PCL's filter classes."
+keywords: ["pcl", "filters", "voxel grid", "passthrough", "statistical outlier", "radius outlier", "extract indices", "cropbox"]
+---
+
+## Overview
+
+PCL's `pcl_filters` library provides algorithms for modifying point cloud datasets before further processing. The three primary use cases are:
+
+- **Downsampling** — reduce point count while preserving surface geometry (VoxelGrid)
+- **Noise removal** — discard isolated or statistically anomalous points (StatisticalOutlierRemoval, RadiusOutlierRemoval)
+- **Conditional extraction** — keep only points that satisfy a spatial or field-value constraint (PassThrough, CropBox, ExtractIndices, ConditionalRemoval)
+
+All filter classes inherit from `pcl::Filter<PointT>` and follow the same pattern:
+
+```cpp
+filter.setInputCloud(cloud);
+// set parameters …
+filter.filter(*cloud_out);
+```
+
+<Note>
+  Filters do not modify the input cloud. Pass a separate output cloud to `filter()`.
+</Note>
+
+---
+
+## VoxelGrid
+
+`pcl::VoxelGrid<PointT>` divides space into a 3D grid of fixed-size boxes (voxels). All points inside each voxel are replaced by their centroid, reducing point count while retaining surface shape more accurately than snapping to the voxel centre.
+
+**Header:** `<pcl/filters/voxel_grid.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setLeafSize` | `void setLeafSize(float lx, float ly, float lz)` | Voxel dimensions in metres. Equal values produce cubic voxels. |
+| `setLeafSize` | `void setLeafSize(const Eigen::Vector4f &leaf_size)` | Vector overload. |
+| `getLeafSize` | `Eigen::Vector3f getLeafSize() const` | Returns current leaf size. |
+| `setDownsampleAllData` | `void setDownsampleAllData(bool)` | If `true`, averages all fields (not just XYZ). |
+| `setInputCloud` | inherited | Pointer to the input cloud. |
+| `filter` | inherited | Write filtered result to output cloud. |
+
+### Code example
+
+<CodeGroup>
+
+```cpp voxel_grid.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
+#include <iostream>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+
+  // Load point cloud from disk
+  pcl::PCDReader reader;
+  reader.read("table_scene_lms400.pcd", *cloud);
+  std::cout << "Before filtering: " << cloud->size() << " points\n";
+
+  // Create the filter and set a 1 cm leaf size
+  pcl::VoxelGrid<pcl::PointXYZ> vg;
+  vg.setInputCloud(cloud);
+  vg.setLeafSize(0.01f, 0.01f, 0.01f);
+  vg.filter(*cloud_filtered);
+
+  std::cout << "After filtering:  " << cloud_filtered->size() << " points\n";
+
+  pcl::PCDWriter writer;
+  writer.write("table_scene_lms400_downsampled.pcd", *cloud_filtered);
+  return 0;
+}
+```
+
+```cmake CMakeLists.txt
+cmake_minimum_required(VERSION 3.5)
+project(voxel_grid_example)
+
+find_package(PCL 1.3 REQUIRED COMPONENTS common io filters)
+include_directories(${PCL_INCLUDE_DIRS})
+link_directories(${PCL_LIBRARY_DIRS})
+add_definitions(${PCL_DEFINITIONS})
+
+add_executable(voxel_grid voxel_grid.cpp)
+target_link_libraries(voxel_grid ${PCL_LIBRARIES})
+```
+
+</CodeGroup>
+
+<Tip>
+  A leaf size of 0.01 m (1 cm) typically reduces an indoor scene from ~460 000 points to ~41 000 points — roughly a 10× reduction — while preserving enough geometry for plane and cluster detection.
+</Tip>
+
+---
+
+## PassThrough
+
+`pcl::PassThrough<PointT>` keeps or removes points whose value in a named field falls within a user-specified interval. It iterates through the cloud once, automatically discarding non-finite points as well.
+
+**Header:** `<pcl/filters/passthrough.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setFilterFieldName` | `void setFilterFieldName(const std::string &field)` | Name of the field to filter on (`"x"`, `"z"`, `"intensity"`, …). |
+| `setFilterLimits` | `void setFilterLimits(float min, float max)` | Inclusive interval to keep (or remove if `setNegative(true)`). |
+| `setNegative` | `void setNegative(bool)` | If `true`, keeps points *outside* the interval. |
+| `getRemovedIndices` | `IndicesConstPtr getRemovedIndices()` | Returns indices of removed points (requires constructor `true`). |
+
+### Code example
+
+```cpp passthrough.cpp
+#include <pcl/point_types.h>
+#include <pcl/filters/passthrough.h>
+#include <iostream>
+
+int main()
+{
+  // Build a small synthetic cloud
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  cloud->width = 5;
+  cloud->height = 1;
+  cloud->resize(5);
+  (*cloud)[0] = {0.35f, -0.15f, -0.11f};
+  (*cloud)[1] = {-0.40f, -0.47f,  0.29f};
+  (*cloud)[2] = {-0.73f,  0.67f,  0.44f};
+  (*cloud)[3] = {-0.73f,  0.85f, -0.04f};
+  (*cloud)[4] = {-0.46f, -0.28f, -0.92f};
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+
+  // Keep only points with z in [0.0, 1.0]
+  pcl::PassThrough<pcl::PointXYZ> pass;
+  pass.setInputCloud(cloud);
+  pass.setFilterFieldName("z");
+  pass.setFilterLimits(0.0f, 1.0f);
+  // pass.setNegative(true);  // uncomment to invert selection
+  pass.filter(*cloud_filtered);
+
+  std::cout << "Points remaining: " << cloud_filtered->size() << "\n";
+  // Expected: 2 (z = 0.29 and z = 0.44)
+  return 0;
+}
+```
+
+<Note>
+  Chain multiple `PassThrough` filters to constrain several fields simultaneously. Reuse the same object: call `setIndices()` with the previous result, then `setFilterFieldName()` for the next field.
+</Note>
+
+---
+
+## StatisticalOutlierRemoval
+
+`pcl::StatisticalOutlierRemoval<PointT>` removes points whose mean distance to their k nearest neighbours deviates significantly from the global distribution. The threshold is `mean + stddev_multiplier × stddev`.
+
+**Header:** `<pcl/filters/statistical_outlier_removal.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setMeanK` | `void setMeanK(int k)` | Number of neighbours to analyse per point. Typical range: 10–50. |
+| `setStddevMulThresh` | `void setStddevMulThresh(double stddev_mult)` | Multiplier for the standard deviation. Lower = more aggressive removal. |
+| `setNegative` | `void setNegative(bool)` | If `true`, outputs the outliers instead of the inliers. |
+
+### Code example
+
+```cpp statistical_outlier.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <iostream>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader reader;
+  reader.read("table_scene_lms400.pcd", *cloud);
+  std::cout << "Before: " << cloud->size() << " points\n";
+
+  // Initialise with true to enable getRemovedIndices()
+  pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor(true);
+  sor.setInputCloud(cloud);
+  sor.setMeanK(50);           // analyse 50 neighbours per point
+  sor.setStddevMulThresh(1.0); // remove points > 1 std-dev above mean distance
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr inliers(new pcl::PointCloud<pcl::PointXYZ>);
+  sor.filter(*inliers);
+  std::cout << "Inliers: " << inliers->size() << " points\n";
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr outliers(new pcl::PointCloud<pcl::PointXYZ>);
+  sor.setNegative(true);
+  sor.filter(*outliers);
+  std::cout << "Outliers: " << outliers->size() << " points\n";
+
+  pcl::PCDWriter writer;
+  writer.write("inliers.pcd", *inliers);
+  writer.write("outliers.pcd", *outliers);
+  return 0;
+}
+```
+
+<Tip>
+  With `stddev_mult = 1.0` and a Gaussian distance distribution, roughly 84 % of points are kept as inliers. Increase to `2.0` to keep ~97 %.
+</Tip>
+
+---
+
+## RadiusOutlierRemoval
+
+`pcl::RadiusOutlierRemoval<PointT>` removes any point that has fewer than a minimum number of neighbours within a given radius. This is faster than `StatisticalOutlierRemoval` but less adaptive to varying densities.
+
+**Header:** `<pcl/filters/radius_outlier_removal.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setRadiusSearch` | `void setRadiusSearch(double radius)` | Search radius in metres. |
+| `setMinNeighborsInRadius` | `void setMinNeighborsInRadius(int min_pts)` | Points with fewer neighbours are removed. |
+| `setNegative` | `void setNegative(bool)` | If `true`, returns the removed points. |
+
+### Code example
+
+```cpp radius_outlier.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/radius_outlier_removal.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("table_scene_lms400.pcd", *cloud);
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+
+  pcl::RadiusOutlierRemoval<pcl::PointXYZ> ror;
+  ror.setInputCloud(cloud);
+  ror.setRadiusSearch(0.08);       // 8 cm search radius
+  ror.setMinNeighborsInRadius(2);  // need at least 2 neighbours
+  ror.filter(*cloud_filtered);
+
+  pcl::PCDWriter().write("filtered.pcd", *cloud_filtered);
+  return 0;
+}
+```
+
+---
+
+## ExtractIndices
+
+`pcl::ExtractIndices<PointT>` extracts (or removes) a subset of points identified by a `pcl::PointIndices` object. It is commonly used after a segmentation step to isolate or discard a fitted model's inliers.
+
+**Header:** `<pcl/filters/extract_indices.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setIndices` | `void setIndices(const IndicesPtr &)` | Indices to extract. |
+| `setNegative` | `void setNegative(bool)` | If `true`, extracts points **not** in the index list. |
+| `setUserFilterValue` | `void setUserFilterValue(float val)` | Value written to removed points when keeping cloud structure. |
+
+### Code example
+
+```cpp extract_indices.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/segmentation/sac_segmentation.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("table_scene_lms400.pcd", *cloud);
+
+  // Fit a plane with RANSAC (details in the Segmentation module)
+  pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+  pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+  pcl::SACSegmentation<pcl::PointXYZ> seg;
+  seg.setOptimizeCoefficients(true);
+  seg.setModelType(pcl::SACMODEL_PLANE);
+  seg.setMethodType(pcl::SAC_RANSAC);
+  seg.setDistanceThreshold(0.01);
+  seg.setInputCloud(cloud);
+  seg.segment(*inliers, *coefficients);
+
+  // Extract inliers (the plane)
+  pcl::ExtractIndices<pcl::PointXYZ> extract;
+  extract.setInputCloud(cloud);
+  extract.setIndices(inliers);
+  extract.setNegative(false);
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr plane(new pcl::PointCloud<pcl::PointXYZ>);
+  extract.filter(*plane);
+
+  // Extract everything else
+  pcl::PointCloud<pcl::PointXYZ>::Ptr rest(new pcl::PointCloud<pcl::PointXYZ>);
+  extract.setNegative(true);
+  extract.filter(*rest);
+
+  return 0;
+}
+```
+
+---
+
+## CropBox
+
+`pcl::CropBox<PointT>` keeps all points whose XYZ coordinates fall inside an axis-aligned box defined by a minimum and maximum point. An optional rigid transform can be applied before the box test.
+
+**Header:** `<pcl/filters/crop_box.h>`
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setMin` | `void setMin(const Eigen::Vector4f &min_pt)` | Minimum corner `(x, y, z, 1)`. |
+| `setMax` | `void setMax(const Eigen::Vector4f &max_pt)` | Maximum corner `(x, y, z, 1)`. |
+| `setTransform` | `void setTransform(const Eigen::Affine3f &transform)` | Optional transform applied before box test. |
+| `setNegative` | `void setNegative(bool)` | If `true`, removes points inside the box. |
+
+```cpp cropbox.cpp
+#include <pcl/filters/crop_box.h>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("scene.pcd", *cloud);
+
+  pcl::CropBox<pcl::PointXYZ> box;
+  box.setInputCloud(cloud);
+  box.setMin(Eigen::Vector4f(-1.0f, -1.0f, 0.0f, 1.0f));
+  box.setMax(Eigen::Vector4f( 1.0f,  1.0f, 2.0f, 1.0f));
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cropped(new pcl::PointCloud<pcl::PointXYZ>);
+  box.filter(*cropped);
+  return 0;
+}
+```
+
+---
+
+## ConditionalRemoval
+
+`pcl::ConditionalRemoval<PointT>` removes points that do not satisfy a user-defined set of field comparisons. Conditions are composed from `pcl::FieldComparison` objects combined with `pcl::ConditionAnd` (all must hold) or `pcl::ConditionOr` (at least one must hold).
+
+**Header:** `<pcl/filters/conditional_removal.h>`
+
+### Code example
+
+```cpp conditional_removal.cpp
+#include <pcl/filters/conditional_removal.h>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PCDReader().read("scene.pcd", *cloud);
+
+  // Build condition: 0.0 <= z <= 1.0
+  pcl::ConditionAnd<pcl::PointXYZ>::Ptr range_cond(new pcl::ConditionAnd<pcl::PointXYZ>);
+  range_cond->addComparison(pcl::FieldComparison<pcl::PointXYZ>::ConstPtr(
+      new pcl::FieldComparison<pcl::PointXYZ>("z", pcl::ComparisonOps::GT, 0.0)));
+  range_cond->addComparison(pcl::FieldComparison<pcl::PointXYZ>::ConstPtr(
+      new pcl::FieldComparison<pcl::PointXYZ>("z", pcl::ComparisonOps::LT, 1.0)));
+
+  pcl::ConditionalRemoval<pcl::PointXYZ> cr;
+  cr.setCondition(range_cond);
+  cr.setInputCloud(cloud);
+  cr.setKeepOrganized(true); // keep cloud width/height, replace removed points with NaN
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+  cr.filter(*cloud_filtered);
+  return 0;
+}
+```
+
+<Note>
+  `setKeepOrganized(true)` preserves the 2D grid structure of organised clouds (e.g., from depth cameras) by replacing removed points with NaN instead of compacting the array.
+</Note>

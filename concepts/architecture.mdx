@@ -1,0 +1,210 @@
+---
+title: "Architecture"
+description: "How PCL is organized into independent modules, the role of PCLBase, template metaprogramming with PointT, and thread-safety considerations."
+---
+
+PCL is a collection of independent C++ shared libraries. Each library covers a specific processing domain, and libraries declare explicit dependencies on one another so you can link only what your application needs.
+
+## Module overview
+
+<CardGroup cols={3}>
+  <Card title="common" icon="cube">
+    Base types, `PointCloud<T>`, math utilities, and point type definitions. Every other module depends on this.
+  </Card>
+  <Card title="io" icon="hard-drive">
+    File I/O (PCD, PLY, OBJ, PNG depth maps) and hardware grabbers (OpenNI, RealSense, Velodyne).
+  </Card>
+  <Card title="kdtree" icon="tree">
+    `KdTreeFLANN` — kd-tree spatial index backed by FLANN. Used by filters, features, segmentation, and registration.
+  </Card>
+  <Card title="octree" icon="network">
+    Hierarchical octree for spatial partitioning, occupancy checking, and voxel-level search.
+  </Card>
+  <Card title="search" icon="magnifying-glass">
+    Unified search API (`pcl::search::Search<T>`) that dispatches to kdtree or octree, letting algorithms stay independent of the backend.
+  </Card>
+  <Card title="filters" icon="filter">
+    Cloud preprocessing: voxel grid downsampling, statistical outlier removal, pass-through, crop box, and more. Depends on kdtree and octree.
+  </Card>
+  <Card title="features" icon="star">
+    Descriptor computation: normals, FPFH, VFH, SHOT, PFH, NARF, and more. Depends on kdtree and search.
+  </Card>
+  <Card title="keypoints" icon="map-pin">
+    Interest point detection (SIFT, NARF, AGAST, BRISK). Depends on kdtree, features, and filters.
+  </Card>
+  <Card title="sample_consensus" icon="crosshair">
+    RANSAC and other consensus algorithms with pluggable model types (plane, sphere, cylinder, line, etc.).
+  </Card>
+  <Card title="segmentation" icon="scissors">
+    Scene partitioning: Euclidean cluster extraction, region growing, min-cut, conditional clustering. Depends on kdtree and sample_consensus.
+  </Card>
+  <Card title="registration" icon="arrows-left-right">
+    Cloud alignment: ICP, NDT, FPCS, feature-based matching. Depends on features, kdtree, and sample_consensus.
+  </Card>
+  <Card title="surface" icon="shapes">
+    Mesh reconstruction: Greedy Projection Triangulation, Poisson, Marching Cubes, Convex Hull. Depends on kdtree.
+  </Card>
+  <Card title="visualization" icon="eye">
+    VTK-based 3D viewer and range image renderer. Depends on common and io.
+  </Card>
+  <Card title="range_image" icon="image">
+    2D range image creation and processing from 3D point clouds.
+  </Card>
+  <Card title="stereo" icon="camera">
+    Disparity map computation and point cloud generation from stereo image pairs.
+  </Card>
+</CardGroup>
+
+### Module dependency graph
+
+The dependency graph determines which libraries you must link:
+
+```
+common
+  ├── io
+  ├── kdtree ──────────────┐
+  ├── octree               │
+  ├── search ──────────────┤
+  ├── filters ─────────────┤
+  ├── features ────────────┤──── registration
+  ├── keypoints ───────────┤
+  ├── sample_consensus ────┤──── segmentation
+  ├── surface ─────────────┘
+  └── visualization
+```
+
+`common` sits at the root. Everything else is optional. Link only the modules you call directly — CMake's exported targets propagate transitive dependencies for you.
+
+<Note>
+Most modules are **compiled** shared or static libraries (`.so` / `.lib`). A few utilities and template-heavy headers are effectively header-only, but the modules themselves require linking. Always use the CMake targets exported by PCL (`pcl_common`, `pcl_io`, `pcl_kdtree`, etc.) rather than specifying raw linker flags.
+</Note>
+
+---
+
+## pcl::PCLBase\<PointT\>
+
+`pcl::PCLBase<PointT>` (defined in `<pcl/pcl_base.h>`) is the base class for all processing algorithms. It standardizes two inputs that every algorithm shares:
+
+- **Input cloud** — set via `setInputCloud(cloud)`
+- **Input indices** — an optional subset of the cloud set via `setIndices(indices)`
+
+When no indices are provided, the algorithm operates on every point in the cloud. When indices are provided, only the indexed subset is processed.
+
+```cpp
+#include <pcl/pcl_base.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr input(
+    new pcl::PointCloud<pcl::PointXYZ>);
+// ... fill input ...
+
+// VoxelGrid inherits PCLBase<PointT>
+pcl::VoxelGrid<pcl::PointXYZ> vg;
+vg.setInputCloud(input);               // PCLBase::setInputCloud
+vg.setLeafSize(0.01f, 0.01f, 0.01f);  // algorithm-specific
+pcl::PointCloud<pcl::PointXYZ>::Ptr output(
+    new pcl::PointCloud<pcl::PointXYZ>);
+vg.filter(*output);
+```
+
+All processing classes follow this pattern:
+
+1. Set the input cloud (and optionally an index set).
+2. Set algorithm-specific parameters.
+3. Call the compute/filter/segment/estimate method.
+4. Read the output from the provided output container.
+
+---
+
+## Template metaprogramming with PointT
+
+PCL algorithms are templated on the point type so that field access is resolved at compile time:
+
+```cpp
+template <typename PointT>
+class NormalEstimation : public PCLBase<PointT>
+{
+    void compute(pcl::PointCloud<pcl::Normal>& output);
+    // Uses pcl::traits::fieldList<PointT> internally
+};
+```
+
+### Field traits
+
+`<pcl/point_struct_traits.h>` and `<pcl/register_point_struct.h>` provide compile-time introspection over point struct fields. The `pcl::traits` namespace exposes:
+
+- `pcl::traits::fieldList<PointT>` — compile-time list of fields in `PointT`
+- `pcl::traits::offset<PointT, Tag>` — byte offset of a named field
+- `pcl::traits::datatype<PointT, Tag>` — C++ type of a named field
+
+This allows algorithms to iterate over fields generically without knowing the concrete type at design time.
+
+### Registering a custom point type
+
+To use a custom struct with any PCL algorithm, register it using the `POINT_CLOUD_REGISTER_POINT_STRUCT` macro **at global namespace scope**, outside any class or function:
+
+```cpp
+#include <pcl/register_point_struct.h>
+#include <pcl/point_cloud.h>
+
+struct MyPoint
+{
+    float x, y, z;
+    float intensity;
+    float custom_field;
+    PCL_MAKE_ALIGNED_OPERATOR_NEW  // required for SSE-aligned structs
+};
+
+// Register in global namespace — gives each field a string tag
+POINT_CLOUD_REGISTER_POINT_STRUCT(
+    MyPoint,
+    (float, x,             x)
+    (float, y,             y)
+    (float, z,             z)
+    (float, intensity,     intensity)
+    (float, custom_field,  custom_field)
+)
+
+int main()
+{
+    pcl::PointCloud<MyPoint>::Ptr cloud(new pcl::PointCloud<MyPoint>);
+    // Use with any PCL algorithm that accepts PointT
+}
+```
+
+The macro registers the field list so that PCL's serialization, I/O (PCD), and inter-module transfer mechanisms can discover the struct's fields at compile time.
+
+<Tip>
+Add `PCL_MAKE_ALIGNED_OPERATOR_NEW` to any custom point struct that uses SSE-aligned Eigen types or that you intend to store in `std::vector` with `Eigen::aligned_allocator`. Without it, misaligned memory access causes crashes on platforms that enforce alignment (most x86-64 processors with SSE/AVX enabled).
+</Tip>
+
+---
+
+## Thread safety
+
+PCL objects are **not thread-safe** by default. Concurrent reads from different threads are safe if you use `ConstPtr` consistently, but you must not modify a cloud or algorithm object from one thread while another thread reads it.
+
+For multi-threaded processing, PCL provides OpenMP variants of the most computationally intensive algorithms:
+
+```cpp
+#include <pcl/features/normal_3d_omp.h>
+
+// NormalEstimationOMP uses OpenMP to parallelize per-point estimation
+pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> ne_omp;
+ne_omp.setNumberOfThreads(4);   // explicit thread count
+ne_omp.setInputCloud(cloud);
+ne_omp.setKSearch(20);
+pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+ne_omp.compute(*normals);
+```
+
+Available OMP variants include:
+
+- `pcl::NormalEstimationOMP<PointT, NormalT>` — parallel normal estimation
+- `pcl::FPFHEstimationOMP<PointT, NormalT, PointOutT>` — parallel FPFH
+- `pcl::IntegralImageNormalEstimation<PointT, NormalT>` — organized cloud normals using integral images (implicitly parallelized)
+
+<Warning>
+Do not share a single algorithm instance across threads. Construct one instance per thread, each with its own `setInputCloud` call. The input `PointCloud` object itself may be shared read-only via `ConstPtr`, but the algorithm's internal state is not protected by a mutex.
+</Warning>

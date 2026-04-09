@@ -1,0 +1,193 @@
+---
+title: "Visualization"
+description: "Render point clouds, meshes, and geometric primitives interactively with PCLVisualizer and CloudViewer."
+---
+
+The `pcl_visualization` module provides two classes for rendering point clouds: `pcl::visualization::CloudViewer` for quick inspection and `pcl::visualization::PCLVisualizer` for full interactive control.
+
+<Note>
+  The visualization module depends on VTK. Ensure VTK is installed and PCL was built with `-DBUILD_visualization=ON`.
+</Note>
+
+## CloudViewer
+
+`pcl::visualization::CloudViewer` is the simplest way to display a point cloud. It opens a window and handles all rendering automatically.
+
+**Header:** `#include <pcl/visualization/cloud_viewer.h>`
+
+```cpp cloud_viewer.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/visualization/cloud_viewer.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+  pcl::io::loadPCDFile("colored.pcd", *cloud);
+
+  pcl::visualization::CloudViewer viewer("Simple Cloud Viewer");
+  viewer.showCloud(cloud);
+
+  while (!viewer.wasStopped())
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+  return 0;
+}
+```
+
+<Tip>
+  Use `CloudViewer` for quick debugging. For anything more complex — custom colors, multiple clouds, animation loops, or overlays — use `PCLVisualizer`.
+</Tip>
+
+## PCLVisualizer
+
+`pcl::visualization::PCLVisualizer` provides full control over rendering: multiple point clouds, meshes, geometric primitives, color handlers, camera, and keyboard/mouse callbacks.
+
+**Header:** `#include <pcl/visualization/pcl_visualizer.h>`
+
+### Basic usage
+
+```cpp pcl_visualizer.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/visualization/pcl_visualizer.h>
+
+int main()
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::io::loadPCDFile("input.pcd", *cloud);
+
+  pcl::visualization::PCLVisualizer viewer("PCL Viewer");
+  viewer.setBackgroundColor(0, 0, 0);
+  viewer.addPointCloud<pcl::PointXYZ>(cloud, "sample cloud");
+  viewer.setPointCloudRenderingProperties(
+    pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "sample cloud");
+  viewer.addCoordinateSystem(1.0);
+  viewer.initCameraParameters();
+
+  while (!viewer.wasStopped())
+    viewer.spinOnce(100);
+
+  return 0;
+}
+```
+
+### Color handlers
+
+Control how point color is determined during rendering:
+
+<Tabs>
+  <Tab title="RGB from cloud">
+    ```cpp
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::io::loadPCDFile("colored.pcd", *cloud);
+
+    pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(cloud);
+    viewer.addPointCloud<pcl::PointXYZRGB>(cloud, rgb, "rgb cloud");
+    ```
+  </Tab>
+  <Tab title="Uniform color">
+    ```cpp
+    // Render all points red
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> color(cloud, 255, 0, 0);
+    viewer.addPointCloud<pcl::PointXYZ>(cloud, color, "red cloud");
+    ```
+  </Tab>
+  <Tab title="Scalar field">
+    ```cpp
+    // Color by intensity field
+    pcl::visualization::PointCloudColorHandlerGenericField<pcl::PointXYZI> field_color(cloud, "intensity");
+    viewer.addPointCloud<pcl::PointXYZI>(cloud, field_color, "intensity cloud");
+    ```
+  </Tab>
+</Tabs>
+
+### Adding geometric primitives
+
+```cpp primitives.cpp
+pcl::visualization::PCLVisualizer viewer("Viewer");
+
+// Coordinate axes
+viewer.addCoordinateSystem(1.0);
+
+// Sphere
+viewer.addSphere(pcl::PointXYZ(0, 0, 0), 0.2, "sphere");
+
+// Line between two points
+viewer.addLine(pcl::PointXYZ(0, 0, 0), pcl::PointXYZ(1, 1, 1), "line");
+
+// Arrow
+viewer.addArrow(pcl::PointXYZ(1, 0, 0), pcl::PointXYZ(0, 0, 0), 1.0, 0.0, 0.0, false, "arrow");
+
+// 2D text overlay
+viewer.addText("Hello PCL", 10, 10, "text");
+
+// 3D text in scene
+viewer.addText3D("Label", pcl::PointXYZ(0, 0, 1), 0.1, 1.0, 1.0, 1.0, "text3d");
+```
+
+### Displaying meshes
+
+```cpp mesh_viewer.cpp
+#include <pcl/io/vtk_io.h>
+
+pcl::PolygonMesh mesh;
+pcl::io::loadPolygonFileVTK("mesh.vtk", mesh);
+
+pcl::visualization::PCLVisualizer viewer("Mesh Viewer");
+viewer.addPolygonMesh(mesh, "mesh");
+viewer.setRepresentationToSurfaceForAllActors();
+
+while (!viewer.wasStopped())
+  viewer.spinOnce(100);
+```
+
+### Updating clouds in a loop
+
+For live streaming or animation, update the cloud each frame with `updatePointCloud`:
+
+```cpp update_loop.cpp
+pcl::visualization::PCLVisualizer viewer("Live View");
+viewer.addPointCloud<pcl::PointXYZ>(cloud, "live");
+
+while (!viewer.wasStopped())
+{
+  // ... update cloud data ...
+  viewer.updatePointCloud<pcl::PointXYZ>(cloud, "live");
+  viewer.spinOnce(33); // ~30 fps
+}
+```
+
+### Rendering properties
+
+```cpp
+// Point size
+viewer.setPointCloudRenderingProperties(
+  pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "cloud_id");
+
+// Opacity
+viewer.setPointCloudRenderingProperties(
+  pcl::visualization::PCL_VISUALIZER_OPACITY, 0.5, "cloud_id");
+
+// Color (overrides color handler)
+viewer.setPointCloudRenderingProperties(
+  pcl::visualization::PCL_VISUALIZER_COLOR, 1.0, 0.0, 0.0, "cloud_id");
+```
+
+## PCLPlotter
+
+`pcl::visualization::PCLPlotter` renders 2D plots and histograms — useful for visualizing feature descriptors:
+
+```cpp plotter.cpp
+#include <pcl/visualization/pcl_plotter.h>
+
+pcl::visualization::PCLPlotter plotter;
+plotter.setTitle("FPFH Histogram");
+plotter.setXTitle("Bin");
+plotter.setYTitle("Value");
+
+std::vector<double> values(fpfh_descriptor.histogram,
+                            fpfh_descriptor.histogram + 33);
+plotter.addPlotData(values, "FPFH");
+plotter.plot();
+```

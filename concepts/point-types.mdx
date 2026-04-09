@@ -1,0 +1,183 @@
+---
+title: "Point types"
+description: "An overview of PCL's PointT template concept, the built-in point type structs, and how to create and iterate over point clouds."
+---
+
+PCL algorithms are templated on a **point type** — a plain C++ struct that describes the data stored at each point in a cloud. Because algorithms are compiled against a specific `PointT`, the compiler can inline field access, apply SSE alignment, and eliminate dead code for fields that a given algorithm does not use. You choose the point type that matches your data, and only pay for what you carry.
+
+```cpp
+// Every PCL algorithm is templated on PointT
+template <typename PointT>
+class NormalEstimation : public PCLBase<PointT> { ... };
+
+// Instantiate for XYZ-only data
+NormalEstimation<pcl::PointXYZ> ne;
+```
+
+## Built-in point types
+
+PCL ships the following structs in `<pcl/point_types.h>`. All XYZ coordinates are stored as `float`. SSE-alignment padding is added automatically where required.
+
+| Type | Fields | Typical use case |
+|------|--------|-----------------|
+| `PointXYZ` | `x, y, z` | Basic geometry, most algorithms |
+| `PointXYZI` | `x, y, z, intensity` | LiDAR scans with per-return intensity |
+| `PointXYZRGB` | `x, y, z, r, g, b` | Colored point clouds (RGB-D cameras) |
+| `PointXYZRGBA` | `x, y, z, r, g, b, a` | Colored clouds with transparency |
+| `PointXYZL` | `x, y, z, label` | Per-point integer label (segmentation) |
+| `PointNormal` | `x, y, z, normal_x, normal_y, normal_z, curvature` | Geometry with estimated surface normals |
+| `PointXYZRGBNormal` | `x, y, z, r, g, b, normal_x, normal_y, normal_z, curvature` | Color + normal combined |
+| `PointXYZINormal` | `x, y, z, intensity, normal_x, normal_y, normal_z, curvature` | Intensity + normal combined |
+| `PointWithRange` | `x, y, z, range` | Range images, structured light |
+| `PointWithViewpoint` | `x, y, z, vp_x, vp_y, vp_z` | Points annotated with sensor viewpoint |
+| `PointWithScale` | `x, y, z, scale, angle, response, octave` | Keypoints with scale/response info |
+| `PointSurfel` | `x, y, z, normal_x, normal_y, normal_z, r, g, b, a, radius, confidence, curvature` | Surfel-based surface representation |
+| `FPFHSignature33` | `histogram[33]` | Fast Point Feature Histogram descriptor |
+| `VFHSignature308` | `vfh[308]` | Viewpoint Feature Histogram descriptor |
+| `SHOT352` | `descriptor[352], rf[9]` | SHOT local descriptor |
+| `PFHSignature125` | `pfh[125]` | Point Feature Histogram descriptor |
+| `Boundary` | `boundary_point` | Boundary estimation result flag |
+| `PrincipalCurvatures` | `principal_curvature_x, principal_curvature_y, principal_curvature_z, pc1, pc2` | Principal curvature estimation output |
+| `Normal` | `normal_x, normal_y, normal_z, curvature` | Surface normal without XYZ position |
+| `IntensityGradient` | `gradient[3]` | Intensity gradient at a point |
+
+<AccordionGroup>
+  <Accordion title="Geometry types (XYZ variants)">
+    **`PointXYZ`** is the baseline type. The three floats are padded to a 16-byte boundary for SSE operations, so the struct is actually 16 bytes even though it only carries 12 bytes of data. Access the data as `point.x`, `point.y`, `point.z`, or via the raw array `point.data[0..2]`.
+
+    **`PointXYZI`** stores intensity in a separate union from the xyz data because arithmetic on XYZ (e.g., homogeneous transforms) sets the fourth component of `data[4]` to 0 or 1, which would corrupt an intensity field placed in that slot.
+
+    **`PointXYZRGB`** and **`PointXYZRGBA`** pack the colour channels into a `uint32_t` field called `rgba`. You can access them as `point.r`, `point.g`, `point.b`, and `point.a` via a union.
+  </Accordion>
+
+  <Accordion title="Descriptor types">
+    Descriptor types do not carry XYZ coordinates — they store the output of a feature estimation algorithm. Use them as the output cloud type when calling a feature estimator:
+
+    ```cpp
+    pcl::PointCloud<pcl::FPFHSignature33>::Ptr features(
+        new pcl::PointCloud<pcl::FPFHSignature33>);
+    fpfh.compute(*features);
+    ```
+
+    **`FPFHSignature33`** holds 33 floats representing a Fast Point Feature Histogram. **`VFHSignature308`** holds 308 floats for the Viewpoint Feature Histogram (one descriptor per cloud, not per point). **`SHOT352`** holds a 352-float SHOT descriptor and a 9-float reference frame.
+  </Accordion>
+
+  <Accordion title="Annotation types">
+    **`Boundary`** carries a single `uint8_t boundary_point` flag set by `pcl::BoundaryEstimation` — non-zero if the point lies on a boundary.
+
+    **`PrincipalCurvatures`** holds the two principal curvature magnitudes (`pc1`, `pc2`) and the direction of the largest principal curvature (`principal_curvature_x/y/z`), output by `pcl::PrincipalCurvaturesEstimation`.
+
+    **`Normal`** stores only the normal vector and curvature, without XYZ. Use it as the output type when you want to keep normals in a separate cloud parallel to the input.
+  </Accordion>
+</AccordionGroup>
+
+## Creating a point cloud
+
+Use the `Ptr` typedef (a `shared_ptr`) to heap-allocate clouds and pass them between PCL classes without copying:
+
+```cpp
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+
+// Stack allocation — fine for local use
+pcl::PointCloud<pcl::PointXYZ> cloud_stack;
+
+// Heap allocation via shared_ptr — required by most PCL algorithms
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+// Pre-allocate 1000 points
+cloud->resize(1000);
+cloud->width = 1000;
+cloud->height = 1;
+cloud->is_dense = true;
+```
+
+<Tip>
+Prefer `pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>()` over `new` when your compiler supports C++17 — it performs a single allocation for both the control block and the object.
+</Tip>
+
+## Organized vs unorganized clouds
+
+A cloud's `width` and `height` fields describe its layout:
+
+| Property | Unorganized | Organized |
+|----------|-------------|-----------|
+| `height` | `1` | `> 1` (number of rows) |
+| `width` | total number of points | number of points per row |
+| `isOrganized()` | `false` | `true` |
+| Use case | LiDAR scans, merged clouds | Depth cameras, stereo cameras |
+
+An organized cloud preserves the pixel-grid relationship between points, which enables efficient nearest-neighbor lookups by 2D index and access via `cloud(column, row)`.
+
+```cpp
+// Organized cloud from a 640×480 depth camera
+pcl::PointCloud<pcl::PointXYZ>::Ptr organized(
+    new pcl::PointCloud<pcl::PointXYZ>(640, 480));
+// organized->width  == 640
+// organized->height == 480
+// organized->isOrganized() == true
+
+// Access by row and column
+pcl::PointXYZ& p = (*organized)(320, 240); // centre pixel
+
+// Unorganized cloud
+pcl::PointCloud<pcl::PointXYZ>::Ptr unorganized(
+    new pcl::PointCloud<pcl::PointXYZ>);
+unorganized->push_back(pcl::PointXYZ(1.0f, 2.0f, 3.0f));
+// height == 1 after push_back
+```
+
+The `is_dense` flag is `true` when every point in the cloud has finite coordinates (no NaN or Inf values). Many algorithms require dense input.
+
+<Warning>
+Calling `cloud(column, row)` on an unorganized cloud (height == 1) throws `pcl::UnorganizedPointCloudException`. Always check `isOrganized()` before using 2D indexing.
+</Warning>
+
+## Accessing points
+
+Points are stored in `cloud->points`, a `std::vector<PointT>` with Eigen-aligned allocation. You can access them by index or with a range-for loop:
+
+```cpp
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <iostream>
+
+int main()
+{
+    // Create and fill a cloud
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
+        new pcl::PointCloud<pcl::PointXYZ>);
+
+    cloud->resize(5);
+    for (std::size_t i = 0; i < cloud->size(); ++i)
+    {
+        cloud->points[i].x = static_cast<float>(i);
+        cloud->points[i].y = static_cast<float>(i) * 0.5f;
+        cloud->points[i].z = 0.0f;
+    }
+    cloud->width  = static_cast<std::uint32_t>(cloud->size());
+    cloud->height = 1;
+    cloud->is_dense = true;
+
+    // Index access
+    std::cout << "Point 0: "
+              << cloud->points[0].x << ", "
+              << cloud->points[0].y << ", "
+              << cloud->points[0].z << "\n";
+
+    // Range-for (PointCloud satisfies the Container concept)
+    for (const auto& pt : *cloud)
+    {
+        std::cout << pt.x << " " << pt.y << " " << pt.z << "\n";
+    }
+
+    // push_back adds a single point (sets height to 1, width to size())
+    cloud->push_back(pcl::PointXYZ(10.0f, 0.0f, 0.0f));
+
+    return 0;
+}
+```
+
+<Note>
+`cloud->points` and `*cloud` iterate over the same underlying vector. Range-for on a `PointCloud` object (not the pointer) calls `begin()` and `end()` directly on the cloud's points vector, so both `for (auto& p : *cloud)` and `for (auto& p : cloud->points)` are equivalent.
+</Note>

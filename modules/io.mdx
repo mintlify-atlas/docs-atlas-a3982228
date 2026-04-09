@@ -1,0 +1,188 @@
+---
+title: "I/O and sensors"
+description: "Read and write point clouds in PCD, PLY, OBJ formats and stream data from live sensors."
+---
+
+The `pcl_io` module provides file I/O for common point cloud formats and a `Grabber` interface for streaming live data from depth cameras and LiDAR sensors.
+
+<CardGroup cols={2}>
+  <Card title="File formats" icon="file" href="#file-formats">
+    Read and write PCD, PLY, OBJ, and PNG files.
+  </Card>
+  <Card title="Sensor grabbers" icon="camera" href="#sensor-grabbers">
+    Stream live data from OpenNI, RealSense, Velodyne, and more.
+  </Card>
+</CardGroup>
+
+## File formats
+
+### PCD files
+
+The PCD (Point Cloud Data) format is PCL's native file format. It supports ASCII and binary (including compressed) encoding.
+
+**Header:** `#include <pcl/io/pcd_io.h>`
+
+```cpp pcd_io.cpp
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+
+// Load
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+if (pcl::io::loadPCDFile<pcl::PointXYZ>("input.pcd", *cloud) == -1)
+{
+  PCL_ERROR("Could not read file\n");
+  return -1;
+}
+
+// Save — ASCII
+pcl::io::savePCDFileASCII("output_ascii.pcd", *cloud);
+
+// Save — binary (faster, smaller)
+pcl::io::savePCDFileBinary("output_binary.pcd", *cloud);
+
+// Save — binary compressed (smallest)
+pcl::io::savePCDFileBinaryCompressed("output_compressed.pcd", *cloud);
+```
+
+For more control, use `pcl::PCDReader` and `pcl::PCDWriter` directly:
+
+```cpp pcd_rw.cpp
+pcl::PCDReader reader;
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+reader.read("colored.pcd", *cloud);
+
+pcl::PCDWriter writer;
+writer.writeBinaryCompressed("out.pcd", *cloud);
+```
+
+### PLY files
+
+**Header:** `#include <pcl/io/ply_io.h>`
+
+```cpp ply_io.cpp
+#include <pcl/io/ply_io.h>
+
+// Load
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+pcl::io::loadPLYFile("input.ply", *cloud);
+
+// Save
+pcl::io::savePLYFile("output.ply", *cloud);
+pcl::io::savePLYFileBinary("output_binary.ply", *cloud);
+
+// Load/save a PolygonMesh
+pcl::PolygonMesh mesh;
+pcl::io::loadPLYFile("mesh.ply", mesh);
+pcl::io::savePLYFile("mesh_out.ply", mesh);
+```
+
+### OBJ files
+
+**Header:** `#include <pcl/io/obj_io.h>`
+
+```cpp obj_io.cpp
+#include <pcl/io/obj_io.h>
+
+pcl::PolygonMesh mesh;
+pcl::io::loadOBJFile("model.obj", mesh);
+pcl::io::saveOBJFile("model_out.obj", mesh);
+```
+
+### Auto-detection I/O
+
+`pcl::io::load` and `pcl::io::save` detect the format from the file extension:
+
+```cpp auto_io.cpp
+#include <pcl/io/auto_io.h>
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+pcl::io::load("input.ply", *cloud);  // works for .pcd and .ply
+pcl::io::save("output.pcd", *cloud);
+```
+
+## Sensor grabbers
+
+The `pcl::Grabber` interface provides a unified callback-based API for streaming point clouds from live sensors.
+
+**Header:** `#include <pcl/io/grabber.h>`
+
+The pattern for all grabbers:
+1. Instantiate the grabber
+2. Register a callback function (called for each frame)
+3. Call `start()` to begin streaming
+4. Call `stop()` when done
+
+### Available grabbers
+
+| Grabber class | Sensor | Header |
+|--------------|--------|--------|
+| `OpenNI2Grabber` | Kinect v1, Asus Xtion | `pcl/io/openni2_grabber.h` |
+| `RealSense2Grabber` | Intel RealSense | `pcl/io/real_sense_2_grabber.h` |
+| `VLPGrabber` | Velodyne VLP-16 | `pcl/io/vlp_grabber.h` |
+| `HDLGrabber` | Velodyne HDL-32/64 | `pcl/io/hdl_grabber.h` |
+| `PCDGrabber` | PCD files (replay) | `pcl/io/pcd_grabber.h` |
+| `ImageGrabber` | Image + depth files | `pcl/io/image_grabber.h` |
+
+<Note>
+  Grabber availability depends on the libraries present at build time. OpenNI2Grabber requires libopenni2; RealSense2Grabber requires librealsense2. Check your PCL build configuration with `cmake -DBUILD_openni2=ON`.
+</Note>
+
+### OpenNI2Grabber example
+
+```cpp openni2_grabber.cpp
+#include <pcl/io/openni2_grabber.h>
+#include <pcl/visualization/cloud_viewer.h>
+
+class SimpleOpenNIViewer
+{
+public:
+  SimpleOpenNIViewer() : viewer("PCL OpenNI2 Viewer") {}
+
+  void cloud_cb(const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr& cloud)
+  {
+    if (!viewer.wasStopped())
+      viewer.showCloud(cloud);
+  }
+
+  void run()
+  {
+    pcl::io::OpenNI2Grabber grabber;
+    auto cb = [this](const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr& cloud) {
+      cloud_cb(cloud);
+    };
+    grabber.registerCallback(cb);
+    grabber.start();
+    while (!viewer.wasStopped())
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    grabber.stop();
+  }
+
+  pcl::visualization::CloudViewer viewer;
+};
+
+int main()
+{
+  SimpleOpenNIViewer v;
+  v.run();
+  return 0;
+}
+```
+
+### PCDGrabber (replay from files)
+
+`pcl::PCDGrabber` replays a sequence of PCD files as if they were a live sensor stream — useful for testing pipelines offline:
+
+```cpp pcd_grabber.cpp
+#include <pcl/io/pcd_grabber.h>
+
+std::vector<std::string> pcd_files = {"frame_0001.pcd", "frame_0002.pcd"};
+pcl::PCDGrabber<pcl::PointXYZ> grabber(pcd_files, 30.0f /*fps*/, true /*repeat*/);
+
+auto cb = [](const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud) {
+  std::cout << "Got cloud with " << cloud->size() << " points\n";
+};
+grabber.registerCallback(cb);
+grabber.start();
+std::this_thread::sleep_for(std::chrono::seconds(5));
+grabber.stop();
+```
